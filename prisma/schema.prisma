@@ -1,0 +1,212 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+enum League {
+  NBA
+  NFL
+  EPL
+  LALIGA
+  WORLD_CUP
+}
+
+enum GameStatus {
+  SCHEDULED
+  LIVE
+  FINAL
+  POSTPONED
+  CANCELED
+}
+
+enum ParlayStatus {
+  PENDING
+  WON
+  LOST
+  PUSH
+}
+
+enum LegOutcome {
+  PENDING
+  WON
+  LOST
+  PUSH
+}
+
+enum MarketSide {
+  YES
+  NO
+}
+
+model Team {
+  id           String   @id @default(cuid())
+  league       League
+  name         String
+  shortName    String?
+  externalId   String?  // provider's id for this team (one provider per league today)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  homeGames    Game[]   @relation("HomeTeam")
+  awayGames    Game[]   @relation("AwayTeam")
+  players      Player[]
+  ratings      TeamRating[]
+
+  @@unique([league, name])
+  @@unique([league, externalId])
+  @@index([league])
+}
+
+model Player {
+  id          String   @id @default(cuid())
+  league      League
+  teamId      String?
+  name        String
+  position    String?
+  externalIds String   @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  team        Team?    @relation(fields: [teamId], references: [id])
+  stats       PlayerGameStat[]
+
+  @@index([league])
+  @@index([teamId])
+}
+
+model Game {
+  id           String     @id @default(cuid())
+  league       League
+  startTime    DateTime
+  status       GameStatus @default(SCHEDULED)
+  homeTeamId   String
+  awayTeamId   String
+  homeScore    Int?
+  awayScore    Int?
+  externalId   String
+  ratingApplied Boolean   @default(false)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  homeTeam     Team       @relation("HomeTeam", fields: [homeTeamId], references: [id])
+  awayTeam     Team       @relation("AwayTeam", fields: [awayTeamId], references: [id])
+  playerStats  PlayerGameStat[]
+  markets      KalshiMarket[]
+  legs         ParlayLeg[]
+
+  @@unique([league, externalId])
+  @@index([league, startTime])
+  @@index([status])
+}
+
+model PlayerGameStat {
+  id        String  @id @default(cuid())
+  gameId    String
+  playerId  String
+  points    Float?
+  rebounds  Float?
+  assists   Float?
+  minutes   Float?
+  raw       String  @default("{}") // JSON blob for provider-specific stats
+
+  game      Game    @relation(fields: [gameId], references: [id])
+  player    Player  @relation(fields: [playerId], references: [id])
+
+  @@unique([gameId, playerId])
+  @@index([playerId])
+}
+
+model TeamRating {
+  id        String   @id @default(cuid())
+  teamId    String
+  league    League
+  rating    Float    @default(1500)
+  updatedAt DateTime @updatedAt
+
+  team      Team     @relation(fields: [teamId], references: [id])
+
+  @@unique([teamId])
+  @@index([league])
+}
+
+model KalshiMarket {
+  id            String    @id @default(cuid())
+  ticker        String    @unique
+  title         String
+  category      String?
+  league        League?
+  gameId        String?
+  yesPrice      Float?    // cents, 0-100
+  noPrice       Float?
+  closeTime     DateTime?
+  status        String?   // open/closed/settled per Kalshi
+  raw           String    @default("{}")
+  updatedAt     DateTime  @updatedAt
+  createdAt     DateTime  @default(now())
+
+  game          Game?     @relation(fields: [gameId], references: [id])
+  legs          ParlayLeg[]
+
+  @@index([league])
+  @@index([gameId])
+}
+
+model Parlay {
+  id                    String       @id @default(cuid())
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+  status                ParlayStatus @default(PENDING)
+  notes                 String?
+  combinedProbability    Float?
+  stake                 Float?
+  source                String       @default("manual") // "suggestion" | "manual"
+
+  legs                  ParlayLeg[]
+}
+
+model ParlayLeg {
+  id                    String      @id @default(cuid())
+  parlayId              String
+  kalshiMarketId        String?
+  gameId                String?
+  description           String
+  side                  MarketSide  @default(YES)
+  predictedProbability  Float
+  marketImpliedProbability Float?
+  actualOutcome         LegOutcome  @default(PENDING)
+  settledAt             DateTime?
+  createdAt             DateTime    @default(now())
+
+  parlay                Parlay        @relation(fields: [parlayId], references: [id], onDelete: Cascade)
+  kalshiMarket          KalshiMarket? @relation(fields: [kalshiMarketId], references: [id])
+  game                  Game?         @relation(fields: [gameId], references: [id])
+  featureLog            ModelFeatureLog?
+
+  @@index([parlayId])
+}
+
+model ModelFeatureLog {
+  id                    String     @id @default(cuid())
+  parlayLegId           String     @unique
+  league                League
+  features              String     // JSON feature vector used for prediction
+  predictedProbability  Float
+  actualOutcome         LegOutcome
+  createdAt             DateTime   @default(now())
+
+  parlayLeg             ParlayLeg  @relation(fields: [parlayLegId], references: [id], onDelete: Cascade)
+
+  @@index([league])
+}
+
+model ModelWeights {
+  id          String   @id @default(cuid())
+  league      League   @unique
+  weights     String   // JSON: { coefficients: number[] }  -- no intercept, plain number array
+  sampleSize  Int
+  trainedAt   DateTime @default(now())
+}
