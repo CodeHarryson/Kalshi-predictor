@@ -7,6 +7,7 @@ import {
   syncAll,
   syncLeagueSportsData,
   syncKalshiMarketsForLeague,
+  syncPropMarketsForLeague,
   ALL_LEAGUES,
 } from "@/lib/sync";
 import { maybeRetrainLeague, maybeRetrainAllLeagues } from "@/lib/scoring/retrain";
@@ -16,6 +17,7 @@ import { computeCalibration } from "@/lib/scoring/calibration";
 import type { CalibrationReport } from "@/lib/scoring/calibration";
 import { checkAdminToken } from "@/lib/admin-auth";
 import { rateLimitAction } from "@/lib/rate-limit";
+import { db } from "@/lib/db";
 
 export interface ActionResult<T> {
   ok: boolean;
@@ -106,6 +108,7 @@ export async function syncKalshiAction(
     const summaries = [];
     for (const l of leagues) {
       summaries.push(await syncKalshiMarketsForLeague(l));
+      await syncPropMarketsForLeague(l);
     }
     const totalUpserted = summaries.reduce((n, s) => n + s.marketsUpserted, 0);
     const anyConfigured = summaries.some((s) => s.configured);
@@ -191,6 +194,72 @@ export async function fetchCalibrationAction(
     const report = await computeCalibration(league as League);
     return { ok: true, data: report };
   } catch (err) {
+    return { ok: false, error: toMessage(err) };
+  }
+}
+
+// Manual outcome for a parlay the user built. The auto-settle path at
+// /api/parlays/[id]/settle owns the data-driven WON/LOST/PUSH rollup;
+// this action is for the case where the user wants to mark a parlay
+// before settlement runs (or after, in case settlement never fires).
+// Refuses to overwrite a parlay that has already been settled, so a
+// race with the auto-settler can't silently rewrite history.
+export async function markParlayOutcomeAction(
+  parlayId: string,
+  outcome: "WON" | "LOST",
+  token?: string | null
+): Promise<ActionResult<{ id: string; status: "WON" | "LOST" }>> {
+  const start = Date.now();
+  try {
+    if (typeof parlayId !== "string" || parlayId.length === 0) {
+      return { ok: false, error: "parlayId is required" };
+    }
+    if (outcome !== "WON" && outcome !== "LOST") {
+      return { ok: false, error: "outcome must be 'WON' or 'LOST'" };
+    }
+
+    const t = await resolveToken(token);
+    const denied = checkAdminToken(t);
+    if (!denied.ok) {
+      console.warn(`[action.markParlayOutcome] denied: ${denied.error}`);
+      return { ok: false, error: denied.error };
+    }
+
+    // 5/30s instead of 1/30s — the user may tap multiple pending rows
+    // in one session while grading paper trades.
+    const limited = rateLimitAction(
+      { key: "action markParlayOutcome", windowMs: 30_000, max: 5 },
+      t
+    );
+    if (limited) {
+      console.warn(`[action.markParlayOutcome] rate-limited: ${limited.error}`);
+      return { ok: false, error: limited.error };
+    }
+
+    // Atomic guard: the update only succeeds if the row is still
+    // PENDING. If a concurrent /api/parlays/[id]/settle call already
+    // resolved it, the user-facing write is rejected with a clear
+    // message instead of silently clobbering the auto-settled result.
+    const result = await db.parlay.updateMany({
+      where: { id: parlayId, status: "PENDING" },
+      data: { status: outcome },
+    });
+    if (result.count === 0) {
+      return { ok: false, error: "Parlay is not pending — already settled." };
+    }
+
+    console.info(
+      `[action.markParlayOutcome] done in ${Date.now() - start}ms — ` +
+        `id=${parlayId}, outcome=${outcome}`
+    );
+    revalidatePath("/history");
+    revalidatePath("/");
+    return { ok: true, data: { id: parlayId, status: outcome } };
+  } catch (err) {
+    console.error(
+      `[action.markParlayOutcome] threw after ${Date.now() - start}ms:`,
+      err
+    );
     return { ok: false, error: toMessage(err) };
   }
 }

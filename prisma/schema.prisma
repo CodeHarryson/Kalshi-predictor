@@ -42,6 +42,27 @@ enum MarketSide {
   NO
 }
 
+// legKind distinguishes what a leg is grading on. Today most legs are
+// GAME_WINNER (the only kind the builder originally produced). Prop legs
+// (player goals, team corners, …) carry an explicit kind so the settlement
+// code routes them through the right grading path — without it, prop legs
+// would fall through to the game-winner branch and silently be marked PUSH
+// when the result obviously wasn't a PUSH, just a different question.
+enum LegKind {
+  GAME_WINNER
+  PLAYER_GOALS
+  TEAM_CORNERS
+}
+
+// propKind mirrors LegKind for the market side: a KalshiMarket's propKind
+// tells the builder which scorer to use. Null means "this is a moneyline
+// / game-winner market" — the default. Same vocabulary as LegKind (and
+// parallel enum) so a leg's legKind can be derived from its market's propKind.
+enum PropKind {
+  PLAYER_GOALS
+  TEAM_CORNERS
+}
+
 model Team {
   id           String   @id @default(cuid())
   league       League
@@ -55,6 +76,7 @@ model Team {
   awayGames    Game[]   @relation("AwayTeam")
   players      Player[]
   ratings      TeamRating[]
+  teamStats    TeamGameStat[]
 
   @@unique([league, name])
   @@unique([league, externalId])
@@ -95,6 +117,7 @@ model Game {
   homeTeam     Team       @relation("HomeTeam", fields: [homeTeamId], references: [id])
   awayTeam     Team       @relation("AwayTeam", fields: [awayTeamId], references: [id])
   playerStats  PlayerGameStat[]
+  teamStats    TeamGameStat[]
   markets      KalshiMarket[]
   legs         ParlayLeg[]
 
@@ -111,6 +134,11 @@ model PlayerGameStat {
   rebounds  Float?
   assists   Float?
   minutes   Float?
+  // Soccer / World Cup player props (populated by syncPropStatsForLeague from
+  // API-Football; null for basketball where it's irrelevant). Kept as a
+  // dedicated column rather than dumped into `raw` so settlement can read it
+  // without parsing JSON.
+  goals     Float?
   raw       String  @default("{}") // JSON blob for provider-specific stats
 
   game      Game    @relation(fields: [gameId], references: [id])
@@ -118,6 +146,25 @@ model PlayerGameStat {
 
   @@unique([gameId, playerId])
   @@index([playerId])
+}
+
+// Team-level box-score stats per game. v1 only stores corners; future
+// prop kinds (shots, cards, …) add columns here. Kept separate from
+// PlayerGameStat so a missing stat for a player doesn't block a team prop
+// grade on the same game, and so we can put a unique index on (gameId, teamId)
+// cleanly.
+model TeamGameStat {
+  id        String  @id @default(cuid())
+  gameId    String
+  teamId    String
+  corners   Float?
+  raw       String  @default("{}")
+
+  game      Game    @relation(fields: [gameId], references: [id])
+  team      Team    @relation(fields: [teamId], references: [id])
+
+  @@unique([gameId, teamId])
+  @@index([teamId])
 }
 
 model TeamRating {
@@ -148,6 +195,15 @@ model KalshiMarket {
   noPrice       Float?
   closeTime     DateTime?
   status        String?   // open/closed/settled per Kalshi
+  // Prop-market fields. Null for moneyline / game-winner markets (the
+  // default). Populated at sync time by the kalshi-props parser once Step 0
+  // (live-verify) is done and we know the actual KXWCPLAYERGOALS /
+  // KXWCTCORNERS ticker shape. Until then these stay null and the builder
+  // branch in builder.ts sees null and falls through to the moneyline path.
+  propKind              PropKind?
+  propThreshold         Float?    // e.g. 0.5 for "0.5+ goals", 5.5 for "over 5.5 corners"
+  propSubjectExternalId String?   // provider id (Player or Team) the prop grades on
+  propSubjectName       String?   // denormalized for human-readable leg labels
   raw           String    @default("{}")
   updatedAt     DateTime  @updatedAt
   createdAt     DateTime  @default(now())
@@ -179,6 +235,11 @@ model ParlayLeg {
   gameId                String?
   description           String
   side                  MarketSide  @default(YES)
+  // What this leg is grading on. Defaults to GAME_WINNER so existing rows
+  // (created before prop legs existed) grade correctly under the new settle
+  // code. The settlement route branches on this so a prop leg is never
+  // silently routed through the game-winner path.
+  legKind               LegKind     @default(GAME_WINNER)
   predictedProbability  Float
   marketImpliedProbability Float?
   actualOutcome         LegOutcome  @default(PENDING)

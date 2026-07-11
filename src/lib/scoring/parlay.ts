@@ -1,5 +1,6 @@
 export interface ParlayLegCandidate {
-  gameId: string;
+  // Null for tournament-scoped legs (e.g. PLAYER_GOALS) with no single game.
+  gameId: string | null;
   probability: number;
   marketImpliedProbability?: number;
 }

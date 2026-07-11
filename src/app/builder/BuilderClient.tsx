@@ -25,10 +25,11 @@ import { fetchSuggestionsAction } from "@/lib/actions";
 import { useAdminToken } from "@/lib/use-admin-token";
 
 interface Candidate {
-  gameId: string;
+  gameId: string | null;
   kalshiMarketId: string;
   description: string;
   side: "YES" | "NO";
+  legKind: "GAME_WINNER" | "PLAYER_GOALS" | "TEAM_CORNERS";
   predictedProbability: number;
   marketImpliedProbability: number | null;
   edge: number;

@@ -2,12 +2,18 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { combineParlayProbability } from "@/lib/scoring/parlay";
 import { requireAdmin } from "@/lib/admin-auth";
+import type { LegKind } from "@/generated/prisma/enums";
+
+const LEG_KINDS: LegKind[] = ["GAME_WINNER", "PLAYER_GOALS", "TEAM_CORNERS"];
 
 interface LegInput {
-  gameId: string;
+  // Null for tournament-scoped legs (PLAYER_GOALS) with no single game to
+  // reference - see src/lib/builder.ts's CandidateLeg comment.
+  gameId: string | null;
   kalshiMarketId?: string;
   description: string;
   side: "YES" | "NO";
+  legKind: LegKind;
   predictedProbability: number;
   marketImpliedProbability?: number;
   features: Record<string, number>;
@@ -45,14 +51,22 @@ function validate(body: unknown): { ok: true; data: ParlayInput } | { ok: false;
       return { ok: false, error: `Leg ${i} must be an object.` };
     }
     const leg = raw as Record<string, unknown>;
-    if (typeof leg.gameId !== "string" || leg.gameId.length === 0) {
-      return { ok: false, error: `Leg ${i}: 'gameId' is required.` };
+    // gameId is required for GAME_WINNER/TEAM_CORNERS legs, but null for
+    // tournament-scoped PLAYER_GOALS legs (no single game to reference).
+    if (leg.gameId !== null && (typeof leg.gameId !== "string" || leg.gameId.length === 0)) {
+      return { ok: false, error: `Leg ${i}: 'gameId' must be a non-empty string or null.` };
+    }
+    if (leg.gameId === null && leg.legKind !== "PLAYER_GOALS") {
+      return { ok: false, error: `Leg ${i}: 'gameId' is required unless legKind is 'PLAYER_GOALS'.` };
     }
     if (typeof leg.description !== "string" || leg.description.length === 0) {
       return { ok: false, error: `Leg ${i}: 'description' is required.` };
     }
     if (leg.side !== "YES" && leg.side !== "NO") {
       return { ok: false, error: `Leg ${i}: 'side' must be 'YES' or 'NO'.` };
+    }
+    if (leg.legKind !== undefined && !LEG_KINDS.includes(leg.legKind as LegKind)) {
+      return { ok: false, error: `Leg ${i}: 'legKind' must be one of ${LEG_KINDS.join(", ")}.` };
     }
     if (
       typeof leg.predictedProbability !== "number" ||
@@ -85,10 +99,11 @@ function validate(body: unknown): { ok: true; data: ParlayInput } | { ok: false;
     }
 
     validatedLegs.push({
-      gameId: leg.gameId,
+      gameId: leg.gameId as string | null,
       kalshiMarketId: typeof leg.kalshiMarketId === "string" ? leg.kalshiMarketId : undefined,
       description: leg.description,
       side: leg.side,
+      legKind: LEG_KINDS.includes(leg.legKind as LegKind) ? (leg.legKind as LegKind) : "GAME_WINNER",
       predictedProbability: leg.predictedProbability,
       marketImpliedProbability:
         typeof leg.marketImpliedProbability === "number" ? leg.marketImpliedProbability : undefined,
@@ -122,7 +137,11 @@ export async function POST(request: Request) {
   }
   const { notes, stake, source, legs } = result.data;
 
-  const gameIds = [...new Set(legs.map((l) => l.gameId))];
+  // PLAYER_GOALS legs have gameId: null by design (tournament-scoped, no
+  // single game) - excluded from the FK-existence check below, and their
+  // league is always WORLD_CUP (the only league prop markets sync for
+  // today), resolved directly rather than via this game lookup.
+  const gameIds = [...new Set(legs.map((l) => l.gameId).filter((id): id is string => id !== null))];
   const games = await db.game.findMany({
     where: { id: { in: gameIds } },
     select: { id: true, league: true },
@@ -135,6 +154,11 @@ export async function POST(request: Request) {
       { error: `Unknown gameId(s): ${missing.join(", ")}.` },
       { status: 400 }
     );
+  }
+
+  function legLeague(leg: LegInput) {
+    if (leg.gameId) return leagueByGame.get(leg.gameId);
+    return leg.legKind === "PLAYER_GOALS" ? "WORLD_CUP" : undefined;
   }
 
   const combinedProbability = combineParlayProbability(
@@ -163,6 +187,7 @@ export async function POST(request: Request) {
           gameId: leg.gameId,
           description: leg.description,
           side: leg.side,
+          legKind: leg.legKind,
           predictedProbability: leg.predictedProbability,
           marketImpliedProbability: leg.marketImpliedProbability,
         },
@@ -171,7 +196,7 @@ export async function POST(request: Request) {
       await tx.modelFeatureLog.create({
         data: {
           parlayLegId: createdLeg.id,
-          league: leagueByGame.get(leg.gameId)!,
+          league: legLeague(leg)!,
           features: JSON.stringify(leg.features),
           predictedProbability: leg.predictedProbability,
           actualOutcome: "PENDING",

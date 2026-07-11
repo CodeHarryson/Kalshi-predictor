@@ -2,6 +2,7 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import type { League } from "@/generated/prisma/enums";
+import { PROP_SERIES } from "./kalshi-props";
 
 const BASE_URL = "https://api.elections.kalshi.com/trade-api/v2";
 const BASE_PATH = "/trade-api/v2";
@@ -269,6 +270,30 @@ export async function fetchOpenMarkets(league: League): Promise<KalshiMarketDto[
   }
 
   return all;
+}
+
+// Prop markets (player goals, team corners, ...) live under their own series
+// tickers (see kalshi-props.ts's PROP_SERIES map) and aren't linked to a
+// game by Kalshi the way KXWCGAME's `series_ticker` is - the caller
+// (sync.ts) resolves each returned market's series ticker back to a
+// `propKind` via `parsePropTicker`. v1 only has prop series for World Cup.
+export async function fetchOpenPropMarkets(
+  league: League
+): Promise<{ seriesTicker: string; market: KalshiMarketDto }[]> {
+  if (league !== "WORLD_CUP") return [];
+
+  const results: { seriesTicker: string; market: KalshiMarketDto }[] = [];
+  for (const seriesTicker of Object.keys(PROP_SERIES)) {
+    const data = await kalshiFetch<{ markets: KalshiRawMarket[] }>(
+      `/markets?status=open&series_ticker=${seriesTicker}&limit=200`
+    );
+    if (data?.markets) {
+      for (const raw of data.markets) {
+        results.push({ seriesTicker, market: normalizeMarket(raw) });
+      }
+    }
+  }
+  return results;
 }
 
 export function isKalshiConfigured(): boolean {

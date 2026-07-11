@@ -1,26 +1,15 @@
 import { db } from "@/lib/db";
-import { StatusBadge } from "@/components/status-badge";
+import { HistoryRow } from "@/components/history-row";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Table,
   TableBody,
-  TableCell,
   TableHead,
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
 
 export const dynamic = "force-dynamic";
-
-function formatDate(date: Date) {
-  return date.toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
 
 export default async function HistoryPage() {
   const parlays = await db.parlay.findMany({
@@ -57,36 +46,23 @@ export default async function HistoryPage() {
             </TableHeader>
             <TableBody>
               {parlays.map((parlay) => (
-                <TableRow key={parlay.id} className="align-top">
-                  <TableCell>{formatDate(parlay.createdAt)}</TableCell>
-                  <TableCell className="max-w-md whitespace-normal">
-                    <ul className="flex flex-col gap-1">
-                      {parlay.legs.map((leg) => (
-                        <li
-                          key={leg.id}
-                          className="flex items-center justify-between gap-2"
-                        >
-                          <span className="truncate">
-                            {leg.description}
-                            <span className="ml-1 text-muted-foreground">
-                              ({leg.side} {(leg.predictedProbability * 100).toFixed(0)}%)
-                            </span>
-                          </span>
-                          <StatusBadge status={leg.actualOutcome} />
-                        </li>
-                      ))}
-                    </ul>
-                  </TableCell>
-                  <TableCell>
-                    {parlay.combinedProbability != null
-                      ? `${(parlay.combinedProbability * 100).toFixed(1)}%`
-                      : "—"}
-                  </TableCell>
-                  <TableCell>{parlay.stake != null ? `$${parlay.stake}` : "—"}</TableCell>
-                  <TableCell className="text-right">
-                    <StatusBadge status={parlay.status} />
-                  </TableCell>
-                </TableRow>
+                <HistoryRow
+                  key={parlay.id}
+                  parlay={{
+                    id: parlay.id,
+                    createdAt: parlay.createdAt,
+                    combinedProbability: parlay.combinedProbability,
+                    stake: parlay.stake,
+                    status: parlay.status,
+                    legs: parlay.legs.map((leg) => ({
+                      id: leg.id,
+                      description: leg.description,
+                      side: leg.side,
+                      predictedProbability: leg.predictedProbability,
+                      actualOutcome: leg.actualOutcome,
+                    })),
+                  }}
+                />
               ))}
             </TableBody>
           </Table>

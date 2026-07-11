@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
 import { ALL_LEAGUES } from "@/lib/sync";
+import { buildRecommendedCombos } from "@/lib/builder";
 import { AdminTokenGate } from "@/components/admin-token-gate";
 import { StatusBadge } from "@/components/status-badge";
 import {
@@ -64,13 +65,14 @@ async function upcomingByLeague() {
 }
 
 export default async function DashboardPage() {
-  const [byLeague, recentParlays] = await Promise.all([
+  const [byLeague, recentParlays, combos] = await Promise.all([
     upcomingByLeague(),
     db.parlay.findMany({
       include: { legs: true },
       orderBy: { createdAt: "desc" },
       take: 8,
     }),
+    buildRecommendedCombos(ALL_LEAGUES, { limit: 6 }),
   ]);
 
   const leaguesWithGames = ALL_LEAGUES.filter((l) => byLeague.has(l));
@@ -135,6 +137,129 @@ export default async function DashboardPage() {
               </Card>
             ))}
           </div>
+        )}
+      </section>
+
+      <section className="flex flex-col gap-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-medium">Recommended combos</h2>
+          <Button
+            variant="link"
+            size="sm"
+            nativeButton={false}
+            render={<Link href="/builder" />}
+          >
+            Open builder
+          </Button>
+        </div>
+
+        {combos.length === 0 ? (
+          <Card>
+            <CardContent className="py-8 text-center text-sm text-muted-foreground">
+              No combo recommendations yet. Sync Kalshi markets so the model
+              has up-to-date prices to score.
+            </CardContent>
+          </Card>
+        ) : (
+          <Card>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Legs</TableHead>
+                  <TableHead>Leagues</TableHead>
+                  <TableHead className="text-right">Combined</TableHead>
+                  <TableHead className="text-right">Edge</TableHead>
+                  <TableHead className="text-right">Action</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {combos.map((combo, idx) => {
+                  const edgePct = combo.combinedEdge * 100;
+                  const edgeTone =
+                    edgePct > 0.5
+                      ? "text-green-600 dark:text-green-400"
+                      : edgePct < -0.5
+                        ? "text-red-600 dark:text-red-400"
+                        : "text-muted-foreground";
+                  return (
+                    <TableRow
+                      key={`${idx}-${combo.legs
+                        .map((l) => l.kalshiMarketId)
+                        .join("-")}`}
+                    >
+                      <TableCell className="max-w-md">
+                        <ul className="flex flex-col gap-1">
+                          {combo.legs.map((leg, i) => (
+                            <li
+                              key={i}
+                              className="flex items-center justify-between gap-2 text-sm"
+                            >
+                              <span className="truncate">{leg.description}</span>
+                              <span className="shrink-0 text-muted-foreground">
+                                {(leg.predictedProbability * 100).toFixed(0)}%
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-1">
+                          {combo.leagues.length === 0 ? (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          ) : (
+                            combo.leagues.map((lg) => (
+                              <Badge key={lg} variant="outline">
+                                {LEAGUE_LABEL[lg] ?? lg}
+                              </Badge>
+                            ))
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right font-medium">
+                        {(combo.combinedProbability * 100).toFixed(1)}%
+                      </TableCell>
+                      <TableCell className={`text-right ${edgeTone}`}>
+                        {edgePct > 0 ? "+" : ""}
+                        {edgePct.toFixed(1)}%
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          nativeButton={false}
+                          render={
+                            <Link
+                              href={{
+                                pathname: "/builder",
+                                query: {
+                                  combo: encodeURIComponent(
+                                    JSON.stringify(
+                                      combo.legs.map((l) => ({
+                                        gameId: l.gameId,
+                                        kalshiMarketId: l.kalshiMarketId,
+                                        description: l.description,
+                                        side: l.side,
+                                        legKind: l.legKind,
+                                        predictedProbability: l.predictedProbability,
+                                        marketImpliedProbability: l.marketImpliedProbability,
+                                        features: l.features,
+                                      }))
+                                    )
+                                  ),
+                                },
+                              }}
+                            />
+                          }
+                        >
+                          Build
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </Card>
         )}
       </section>
 
