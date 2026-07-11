@@ -104,11 +104,14 @@ export interface KalshiSyncSummary {
 }
 
 export async function syncKalshiMarketsForLeague(league: League): Promise<KalshiSyncSummary> {
+  const start = Date.now();
   if (!isKalshiConfigured()) {
+    console.warn(`[sync.kalshi] ${league}: skipped (KALSHI_KEY_ID / KALSHI_PRIVATE_KEY not set)`);
     return { league, marketsUpserted: 0, configured: false };
   }
 
   const markets = await fetchOpenMarkets(league);
+  console.info(`[sync.kalshi] ${league}: fetched ${markets.length} market(s) from Kalshi in ${Date.now() - start}ms`);
   const now = new Date();
   const candidateGames = await db.game.findMany({
     where: {
@@ -153,6 +156,16 @@ export async function syncKalshiMarketsForLeague(league: League): Promise<Kalshi
       },
     });
     marketsUpserted += 1;
+  }
+
+  if (marketsUpserted === 0) {
+    // Loud signal: action returns ok:true with 0 markets, which the UI
+    // surfaces as "Sync complete" — easy to mistake for success. If we
+    // were configured but got nothing, almost certainly an auth or
+    // signature failure upstream.
+    console.warn(`[sync.kalshi] ${league}: configured=true but 0 markets upserted — check dev-server logs for HTTP 401/403/429`);
+  } else {
+    console.info(`[sync.kalshi] ${league}: upserted ${marketsUpserted} market(s) in ${Date.now() - start}ms`);
   }
 
   return { league, marketsUpserted, configured: true };

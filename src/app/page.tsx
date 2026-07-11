@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
 import { ALL_LEAGUES } from "@/lib/sync";
-import { AdminControls } from "@/components/admin-controls";
+import { AdminTokenGate } from "@/components/admin-token-gate";
 import { StatusBadge } from "@/components/status-badge";
 import {
   Card,
@@ -84,13 +84,18 @@ export default async function DashboardPage() {
             Upcoming games with open Kalshi markets and recent parlay activity.
           </p>
         </div>
-        <AdminControls />
+        <AdminTokenGate />
       </div>
 
       <section className="flex flex-col gap-4">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-medium">Upcoming games</h2>
-          <Button variant="link" size="sm" render={<Link href="/builder" />}>
+          <Button
+            variant="link"
+            size="sm"
+            nativeButton={false}
+            render={<Link href="/builder" />}
+          >
             Build a parlay
           </Button>
         </div>
@@ -136,7 +141,12 @@ export default async function DashboardPage() {
       <section className="flex flex-col gap-4">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-medium">Recent parlays</h2>
-          <Button variant="link" size="sm" render={<Link href="/history" />}>
+          <Button
+            variant="link"
+            size="sm"
+            nativeButton={false}
+            render={<Link href="/history" />}
+          >
             View all
           </Button>
         </div>

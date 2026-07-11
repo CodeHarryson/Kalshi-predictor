@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fetchSuggestionsAction } from "@/lib/actions";
+import { useAdminToken } from "@/lib/use-admin-token";
 
 interface Candidate {
   gameId: string;
@@ -64,12 +65,13 @@ export default function BuilderClient({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [submitting, startSubmit] = useTransition();
+  const { token, ready } = useAdminToken();
 
   const load = useCallback(async (lg: string) => {
     setLoading(true);
     setSelected(new Set());
     try {
-      const result = await fetchSuggestionsAction(lg);
+      const result = await fetchSuggestionsAction(lg, token);
       if (!result.ok) throw new Error(result.error ?? "Request failed");
       setCandidates(result.data?.candidates ?? []);
     } catch (err) {
@@ -80,11 +82,12 @@ export default function BuilderClient({
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [token]);
 
   useEffect(() => {
+    if (!ready) return;
     load(league);
-  }, [league, load]);
+  }, [league, load, ready]);
 
   function toggle(id: string) {
     setSelected((prev) => {
@@ -100,11 +103,17 @@ export default function BuilderClient({
 
   function build() {
     if (selectedLegs.length === 0) return;
+    if (!token) {
+      toast.error("Could not build parlay", {
+        description: "Admin token not set. Paste ADMIN_TOKEN in the banner above.",
+      });
+      return;
+    }
     startSubmit(async () => {
       try {
         const res = await fetch("/api/parlays", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", "x-admin-token": token },
           body: JSON.stringify({ legs: selectedLegs, source: "suggestion" }),
         });
         if (!res.ok) throw new Error(`Request failed (${res.status})`);
@@ -221,7 +230,10 @@ export default function BuilderClient({
             </>
           )}
         </div>
-        <Button disabled={selectedLegs.length === 0 || submitting} onClick={build}>
+        <Button
+          disabled={selectedLegs.length === 0 || submitting || !ready || !token}
+          onClick={build}
+        >
           Build parlay
         </Button>
       </div>

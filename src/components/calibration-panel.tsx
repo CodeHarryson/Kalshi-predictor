@@ -11,6 +11,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { fetchCalibrationAction } from "@/lib/actions";
+import { useAdminToken } from "@/lib/use-admin-token";
 import type { League } from "@/generated/prisma/enums";
 
 interface Bucket {
@@ -41,12 +42,14 @@ export function CalibrationPanel({ league, initialData }: CalibrationPanelProps)
   const [data, setData] = useState<Calibration | null>(initialData);
   const [loading, setLoading] = useState(!initialData);
   const [error, setError] = useState<string | null>(null);
+  const { token, ready } = useAdminToken();
 
   useEffect(() => {
+    if (!ready) return;
     let active = true;
     setLoading(true);
     setError(null);
-    fetchCalibrationAction(league)
+    fetchCalibrationAction(league, token)
       .then((result) => {
         if (!active) return;
         if (!result.ok) throw new Error(result.error ?? "Request failed");
@@ -57,7 +60,7 @@ export function CalibrationPanel({ league, initialData }: CalibrationPanelProps)
     return () => {
       active = false;
     };
-  }, [league]);
+  }, [league, token, ready]);
 
   if (loading) return <Skeleton className="h-24 w-full" />;
   if (error)

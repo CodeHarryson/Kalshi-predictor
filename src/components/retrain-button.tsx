@@ -4,14 +4,22 @@ import { useTransition } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { retrainAction } from "@/lib/actions";
+import { useAdminToken } from "@/lib/use-admin-token";
 import type { League } from "@/generated/prisma/enums";
 
 export function RetrainButton({ league }: { league: League }) {
   const [isPending, startTransition] = useTransition();
+  const { token, ready } = useAdminToken();
 
   function retrain() {
     startTransition(async () => {
-      const result = await retrainAction(league);
+      if (!token) {
+        toast.error("Retrain failed", {
+          description: "Admin token not set. Paste ADMIN_TOKEN in the banner above.",
+        });
+        return;
+      }
+      const result = await retrainAction(league, token);
       if (!result.ok) {
         toast.error("Retrain failed", { description: result.error });
         return;
@@ -29,7 +37,12 @@ export function RetrainButton({ league }: { league: League }) {
   }
 
   return (
-    <Button variant="outline" size="sm" disabled={isPending} onClick={retrain}>
+    <Button
+      variant="outline"
+      size="sm"
+      disabled={isPending || !ready || !token}
+      onClick={retrain}
+    >
       Retrain {league}
     </Button>
   );
