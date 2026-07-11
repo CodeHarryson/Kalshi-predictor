@@ -56,7 +56,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const game = leg.game;
     if (!game || game.status !== "FINAL" || leg.actualOutcome !== "PENDING") continue;
 
-    const title = leg.kalshiMarket?.title ?? leg.description;
+    const title = leg.kalshiMarket?.yesSubTitle ?? leg.kalshiMarket?.title ?? leg.description;
     const favored = resolveMarketFavoredSide(
       title,
       game.homeTeam.name,

@@ -49,32 +49,43 @@ export function featuresToVector(f: LegFeatures): number[] {
 }
 
 /**
- * Scores the probability that `side` (home or away team) wins the given
- * game. Starts from the explainable Elo+form estimate (composite.ts); if a
- * trained logistic model exists for the league (see retrain.ts) with enough
- * samples, its prediction is used instead as the final probability, with
- * the Elo estimate still included as an input feature so the learned model
- * is a calibration correction on top of it rather than a from-scratch model.
+ * Scores the probability that `side` wins the given game - "home" or "away"
+ * team, or "draw" for 3-way markets (soccer). Starts from the explainable
+ * Elo+form estimate (composite.ts); if a trained logistic model exists for
+ * the league (see retrain.ts) with enough samples, its prediction is used
+ * instead as the final probability, with the Elo estimate still included as
+ * an input feature so the learned model is a calibration correction on top
+ * of it rather than a from-scratch model.
  */
 export async function scoreGameSideProbability(
   gameId: string,
-  side: "home" | "away"
+  side: "home" | "away" | "draw"
 ): Promise<LegScore | null> {
   const est = await estimateGameProbabilities(gameId);
   if (!est) return null;
 
-  const baseProbability = side === "home" ? est.homeWin : est.awayWin;
+  const baseProbability =
+    side === "home" ? est.homeWin : side === "away" ? est.awayWin : est.draw;
+  // A draw isn't attributable to either team, so it gets no directional
+  // rating/form edge and a neutral (0.5) isHome encoding rather than a new
+  // feature dimension.
   const ratingDiff =
-    side === "home" ? est.homeRating - est.awayRating : est.awayRating - est.homeRating;
+    side === "home"
+      ? est.homeRating - est.awayRating
+      : side === "away"
+        ? est.awayRating - est.homeRating
+        : 0;
   const formDiff =
     side === "home"
       ? est.homeRecentForm - est.awayRecentForm
-      : est.awayRecentForm - est.homeRecentForm;
+      : side === "away"
+        ? est.awayRecentForm - est.homeRecentForm
+        : 0;
 
   const features: LegFeatures = {
     baseProbability,
     ratingDiffNorm: ratingDiff / 400,
-    isHome: side === "home" ? 1 : 0,
+    isHome: side === "home" ? 1 : side === "away" ? 0 : 0.5,
     recentFormDiff: formDiff,
   };
 

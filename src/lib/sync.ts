@@ -136,6 +136,7 @@ export async function syncKalshiMarketsForLeague(league: League): Promise<Kalshi
       create: {
         ticker: m.ticker,
         title: m.title,
+        yesSubTitle: m.yes_sub_title,
         category: m.category,
         league,
         gameId: matchedGame?.id,
@@ -147,6 +148,7 @@ export async function syncKalshiMarketsForLeague(league: League): Promise<Kalshi
       },
       update: {
         title: m.title,
+        yesSubTitle: m.yes_sub_title,
         gameId: matchedGame?.id,
         yesPrice: yesPrice ?? undefined,
         noPrice: noPrice ?? undefined,

@@ -83,20 +83,26 @@ function clamp(v: number, min: number, max: number): number {
 }
 
 /**
- * Best-effort parse of a Kalshi market title ("Will the Lakers beat the
- * Celtics?") to figure out which team a YES outcome refers to. Kalshi
- * doesn't give us a structured field for this, so we match phrasing against
- * both team names/short names. Returns null when it can't tell confidently -
- * callers should skip scoring that market rather than guess.
+ * Best-effort parse of Kalshi market text to figure out which outcome a YES
+ * contract refers to: a specific team, or a draw. Callers should pass
+ * `yesSubTitle` when available (e.g. "Reg Time: Argentina", "Reg Time: Tie") -
+ * it's the only reliable signal on 3-way markets, since `title` alone is
+ * identical across all of a game's outcome tickers ("Argentina vs
+ * Switzerland Winner?" is the title for the Argentina-win, Switzerland-win,
+ * AND Tie contracts). Falls back to matching the title's phrasing for older
+ * 2-way markets without a sub-title. Returns null when it can't tell
+ * confidently - callers should skip scoring that market rather than guess.
  */
 export function resolveMarketFavoredSide(
-  title: string,
+  text: string,
   homeTeamName: string,
   homeTeamShort: string | null,
   awayTeamName: string,
   awayTeamShort: string | null
-): "home" | "away" | null {
-  const t = title.toLowerCase();
+): "home" | "away" | "draw" | null {
+  const t = text.toLowerCase();
+  if (/\btie\b|\bdraw\b/.test(t)) return "draw";
+
   const homeNames = [homeTeamName, homeTeamShort].filter(Boolean).map((s) => s!.toLowerCase());
   const awayNames = [awayTeamName, awayTeamShort].filter(Boolean).map((s) => s!.toLowerCase());
 
@@ -107,7 +113,7 @@ export function resolveMarketFavoredSide(
     if (awayNames.some((n) => subject.includes(n) || n.includes(subject))) return "away";
   }
 
-  // Fallback: whichever team name appears first in the title text.
+  // Fallback: whichever team name appears first in the text.
   const homeIdx = Math.min(...homeNames.map((n) => indexOfOrInfinity(t, n)));
   const awayIdx = Math.min(...awayNames.map((n) => indexOfOrInfinity(t, n)));
   if (Number.isFinite(homeIdx) && (!Number.isFinite(awayIdx) || homeIdx < awayIdx)) return "home";

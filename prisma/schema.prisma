@@ -137,6 +137,10 @@ model KalshiMarket {
   id            String    @id @default(cuid())
   ticker        String    @unique
   title         String
+  yesSubTitle   String?   // e.g. "Reg Time: Argentina" / "Reg Time: Tie" - the only
+                          // reliable way to tell which outcome YES refers to on
+                          // multi-outcome (3-way) markets, since `title` is shared
+                          // across all of a game's outcome tickers.
   category      String?
   league        League?
   gameId        String?

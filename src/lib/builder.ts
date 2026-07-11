@@ -45,7 +45,7 @@ export async function buildParlaySuggestions(
       if (market.yesPrice == null) continue;
 
       const favoredSide = resolveMarketFavoredSide(
-        market.title,
+        market.yesSubTitle ?? market.title,
         game.homeTeam.name,
         game.homeTeam.shortName,
         game.awayTeam.name,
@@ -81,10 +81,25 @@ export async function buildParlaySuggestions(
         modelBlended: score.modelBlended ? 1 : 0,
       };
 
+      const outcomeLabel =
+        favoredSide === "draw"
+          ? "Draw"
+          : favoredSide === "home"
+            ? game.homeTeam.name
+            : game.awayTeam.name;
+      const pick =
+        side === "YES"
+          ? favoredSide === "draw"
+            ? "Draw"
+            : `${outcomeLabel} to win`
+          : favoredSide === "draw"
+            ? "No draw"
+            : `${outcomeLabel} NOT to win`;
+
       candidates.push({
         gameId: game.id,
         kalshiMarketId: market.id,
-        description: `${game.awayTeam.name} @ ${game.homeTeam.name} — ${market.title} (${side})`,
+        description: `${game.awayTeam.name} @ ${game.homeTeam.name} — ${pick}`,
         side,
         predictedProbability,
         marketImpliedProbability,

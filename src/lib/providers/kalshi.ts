@@ -20,6 +20,11 @@ const BASE_PATH = "/trade-api/v2";
 export interface KalshiMarketDto {
   ticker: string;
   title: string;
+  // Disambiguates which outcome YES refers to on multi-outcome (3-way)
+  // markets, where `title` is identical across all of a game's outcome
+  // tickers (e.g. "Argentina vs Switzerland Winner?" for the ARG, SUI, AND
+  // Tie tickers). Kalshi sets this per-ticker, e.g. "Reg Time: Argentina".
+  yes_sub_title?: string;
   category?: string;
   yes_bid?: number;
   yes_ask?: number;
@@ -39,6 +44,7 @@ export interface KalshiMarketDto {
 interface KalshiRawMarket {
   ticker: string;
   title: string;
+  yes_sub_title?: string;
   category?: string;
   yes_bid_dollars?: string;
   yes_ask_dollars?: string;
@@ -60,6 +66,7 @@ function normalizeMarket(raw: KalshiRawMarket): KalshiMarketDto {
   return {
     ticker: raw.ticker,
     title: raw.title,
+    yes_sub_title: raw.yes_sub_title,
     category: raw.category,
     yes_bid: dollarsToCents(raw.yes_bid_dollars),
     yes_ask: dollarsToCents(raw.yes_ask_dollars),
