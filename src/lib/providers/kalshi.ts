@@ -299,3 +299,12 @@ export async function fetchOpenPropMarkets(
 export function isKalshiConfigured(): boolean {
   return hasCredentials();
 }
+
+// Unlike /markets (dollar-string fields, see KalshiRawMarket above),
+// /portfolio/balance returns `balance` as a plain integer in cents per
+// Kalshi's docs - no dollars-to-cents conversion needed here. Verify
+// against a live response if this ever comes back undefined.
+export async function fetchAccountBalance(): Promise<{ balanceCents: number } | null> {
+  const data = await kalshiFetch<{ balance: number }>("/portfolio/balance");
+  return data && typeof data.balance === "number" ? { balanceCents: data.balance } : null;
+}

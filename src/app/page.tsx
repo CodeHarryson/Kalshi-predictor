@@ -2,6 +2,8 @@ import Link from "next/link";
 import { db } from "@/lib/db";
 import { ALL_LEAGUES } from "@/lib/sync";
 import { buildRecommendedCombos } from "@/lib/builder";
+import { fetchAccountBalance } from "@/lib/providers/kalshi";
+import { recommendStakeCents } from "@/lib/scoring/parlay";
 import { AdminTokenGate } from "@/components/admin-token-gate";
 import { StatusBadge } from "@/components/status-badge";
 import {
@@ -31,6 +33,10 @@ const LEAGUE_LABEL: Record<string, string> = {
   LALIGA: "La Liga",
   WORLD_CUP: "World Cup",
 };
+
+function formatDollars(cents: number) {
+  return `$${(cents / 100).toFixed(2)}`;
+}
 
 function formatKickoff(date: Date) {
   return date.toLocaleString(undefined, {
@@ -65,7 +71,7 @@ async function upcomingByLeague() {
 }
 
 export default async function DashboardPage() {
-  const [byLeague, recentParlays, combos] = await Promise.all([
+  const [byLeague, recentParlays, combos, balance] = await Promise.all([
     upcomingByLeague(),
     db.parlay.findMany({
       include: { legs: true },
@@ -73,6 +79,7 @@ export default async function DashboardPage() {
       take: 8,
     }),
     buildRecommendedCombos(ALL_LEAGUES, { limit: 6 }),
+    fetchAccountBalance(),
   ]);
 
   const leaguesWithGames = ALL_LEAGUES.filter((l) => byLeague.has(l));
@@ -86,7 +93,13 @@ export default async function DashboardPage() {
             Upcoming games with open Kalshi markets and recent parlay activity.
           </p>
         </div>
-        <AdminTokenGate />
+        <div className="flex items-center gap-3">
+          <Badge variant="outline">
+            Kalshi balance:{" "}
+            {balance ? formatDollars(balance.balanceCents) : "unavailable"}
+          </Badge>
+          <AdminTokenGate />
+        </div>
       </div>
 
       <section className="flex flex-col gap-4">
@@ -169,6 +182,7 @@ export default async function DashboardPage() {
                   <TableHead>Leagues</TableHead>
                   <TableHead className="text-right">Combined</TableHead>
                   <TableHead className="text-right">Edge</TableHead>
+                  <TableHead className="text-right">Suggested stake</TableHead>
                   <TableHead className="text-right">Action</TableHead>
                 </TableRow>
               </TableHeader>
@@ -181,6 +195,13 @@ export default async function DashboardPage() {
                       : edgePct < -0.5
                         ? "text-red-600 dark:text-red-400"
                         : "text-muted-foreground";
+                  const stakeCents = balance
+                    ? recommendStakeCents(
+                        balance.balanceCents,
+                        combo.combinedProbability,
+                        combo.combinedMarketImplied
+                      )
+                    : null;
                   return (
                     <TableRow
                       key={`${idx}-${combo.legs
@@ -221,6 +242,9 @@ export default async function DashboardPage() {
                       <TableCell className={`text-right ${edgeTone}`}>
                         {edgePct > 0 ? "+" : ""}
                         {edgePct.toFixed(1)}%
+                      </TableCell>
+                      <TableCell className="text-right text-muted-foreground">
+                        {stakeCents === null ? "—" : formatDollars(stakeCents)}
                       </TableCell>
                       <TableCell className="text-right">
                         <Button
