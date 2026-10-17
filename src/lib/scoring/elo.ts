@@ -2,18 +2,41 @@ import type { League } from "@/generated/prisma/enums";
 
 export const DEFAULT_RATING = 1500;
 
+/**
+ * A league-wide gap this long between games is an offseason: no league plays
+ * 90 days apart in season, and the shortest offseason (NBA) is ~4 months.
+ */
+export const OFFSEASON_GAP_MS = 90 * 24 * 60 * 60 * 1000;
+
+/** Pulls a rating back toward the mean by `fraction` (0 = unchanged, 1 = reset). */
+export function regressRating(rating: number, fraction: number): number {
+  return DEFAULT_RATING + (rating - DEFAULT_RATING) * (1 - fraction);
+}
+
 interface LeagueEloConfig {
   k: number;
   homeAdvantage: number; // added to home team's rating before computing expectation
   hasDraws: boolean;
   baseDrawProbability: number; // used only when hasDraws is true
+  /**
+   * Scale updates by the winning margin (see marginMultiplier). Because the
+   * multiplier averages well above 1, leagues that use it need a smaller k.
+   */
+  marginOfVictory?: { cap: number };
+  /** Fraction of each rating pulled back to the mean after an offseason gap. */
+  offseasonRegression?: number;
 }
 
 export const ELO_CONFIG: Record<League, LeagueEloConfig> = {
-  NBA: { k: 20, homeAdvantage: 100, hasDraws: false, baseDrawProbability: 0 },
-  NFL: { k: 25, homeAdvantage: 55, hasDraws: false, baseDrawProbability: 0 },
-  // College home-field edge is larger than the NFL's; starting estimate, not fitted.
-  CFB: { k: 25, homeAdvantage: 70, hasDraws: false, baseDrawProbability: 0 },
+  // NBA/NFL/CFB were tuned by loading two seasons plus this year's games
+  // (scripts/backfill-history.ts), replaying them in order, and minimizing log
+  // loss on each pre-game prediction. The optima are shallow, so values are
+  // rounded. NBA's offseasonRegression agrees with an independent check
+  // against Kalshi's early-season prices (best ~0.55). Re-tune after more
+  // seasons are backfilled; do not treat these as permanent.
+  NBA: { k: 12, homeAdvantage: 40, hasDraws: false, baseDrawProbability: 0, marginOfVictory: { cap: 40 }, offseasonRegression: 0.5 },
+  NFL: { k: 28, homeAdvantage: 35, hasDraws: false, baseDrawProbability: 0, marginOfVictory: { cap: 30 }, offseasonRegression: 0.5 },
+  CFB: { k: 44, homeAdvantage: 90, hasDraws: false, baseDrawProbability: 0, marginOfVictory: { cap: 45 }, offseasonRegression: 0.35 },
   EPL: { k: 22, homeAdvantage: 60, hasDraws: true, baseDrawProbability: 0.26 },
   LALIGA: { k: 22, homeAdvantage: 60, hasDraws: true, baseDrawProbability: 0.26 },
   WORLD_CUP: { k: 22, homeAdvantage: 40, hasDraws: true, baseDrawProbability: 0.24 },
@@ -67,6 +90,17 @@ export function matchOutcomeProbabilities(
   return { homeWin, draw: drawClamped, awayWin };
 }
 
+/**
+ * Margin-of-victory multiplier (the FiveThirtyEight form): grows with the
+ * log of the margin so a blowout counts more than a one-score game, but is
+ * damped when the winner was already the much stronger side, so favorites
+ * can't farm rating by running up the score. The margin is capped.
+ */
+export function marginMultiplier(absMargin: number, winnerEloDiff: number, cap: number): number {
+  const m = Math.min(absMargin, cap);
+  return (Math.log(m + 1) * 2.2) / (winnerEloDiff * 0.001 + 2.2);
+}
+
 export interface EloUpdateResult {
   homeRating: number;
   awayRating: number;
@@ -80,11 +114,23 @@ export function updateElo(
   league: League,
   homeRating: number,
   awayRating: number,
-  actualHomeScore: number
+  actualHomeScore: number,
+  /** Home score minus away score; only used by leagues with marginOfVictory. */
+  margin?: number
 ): EloUpdateResult {
   const cfg = ELO_CONFIG[league];
   const expectedHome = eloExpectedScore(homeRating + cfg.homeAdvantage, awayRating);
-  const delta = cfg.k * (actualHomeScore - expectedHome);
+
+  let multiplier = 1;
+  if (cfg.marginOfVictory && margin !== undefined && margin !== 0) {
+    const homeWon = margin > 0;
+    const winnerEloDiff = homeWon
+      ? homeRating + cfg.homeAdvantage - awayRating
+      : awayRating - (homeRating + cfg.homeAdvantage);
+    multiplier = marginMultiplier(Math.abs(margin), winnerEloDiff, cfg.marginOfVictory.cap);
+  }
+
+  const delta = cfg.k * multiplier * (actualHomeScore - expectedHome);
 
   return {
     homeRating: homeRating + delta,

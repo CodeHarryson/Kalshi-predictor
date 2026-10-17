@@ -138,6 +138,17 @@ export async function buildParlaySuggestions(
         recentFormDiff: score.features.recentFormDiff,
         modelBlended: score.modelBlended ? 1 : 0,
       };
+      // Extra inputs, stored for later analysis / retraining. They are not part
+      // of the trained model's vector (see leg-scorer.ts featuresToVector).
+      const extras = {
+        injuryEloDiff: score.features.injuryEloDiff,
+        recentMarginDiff: score.features.recentMarginDiff,
+        h2hMargin: score.features.h2hMargin,
+        h2hGames: score.features.h2hGames,
+      };
+      for (const [key, value] of Object.entries(extras)) {
+        if (typeof value === "number" && Number.isFinite(value)) features[key] = value;
+      }
 
       const outcomeLabel =
         favoredSide === "draw"

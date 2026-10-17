@@ -1,7 +1,7 @@
 import type { League } from "@/generated/prisma/enums";
 import type { DateRange, ProviderGame, ProviderTeam, SportsProvider } from "./types";
 
-const ESPN_FOOTBALL = "https://site.api.espn.com/apis/site/v2/sports/football";
+const ESPN_SPORTS = "https://site.api.espn.com/apis/site/v2/sports";
 
 interface EspnTeamsResponse {
   sports: {
@@ -20,6 +20,7 @@ interface EspnCompetitor {
 interface EspnEvent {
   id: string;
   date: string;
+  season?: { type?: number };
   status: { type: { name: string } };
   competitions: { competitors: EspnCompetitor[] }[];
 }
@@ -40,23 +41,25 @@ function fmt(d: Date): string {
   return d.toISOString().slice(0, 10).replace(/-/g, "");
 }
 
-export interface EspnFootballConfig {
+export interface EspnScoreboardConfig {
   league: League;
   /** ESPN sport path segment, e.g. "nfl" or "college-football". */
   sport: string;
+  /** ESPN sport family: "football" (default) or "basketball". */
+  sportGroup?: string;
   /** ESPN scoreboard `groups` filters (college only: 80 = FBS, 81 = FCS). Empty = unfiltered. */
   groups?: string[];
   teamsLimit: number;
 }
 
 /**
- * ESPN's football scoreboard rejects `dates=A-B` ranges with HTTP 400, so
+ * ESPN's football and basketball scoreboards reject `dates=A-B` ranges with HTTP 400, so
  * games are fetched one day at a time (a week of days per batch) and deduped
  * by event id.
  */
-export function createEspnFootballProvider(cfg: EspnFootballConfig): SportsProvider {
+export function createEspnScoreboardProvider(cfg: EspnScoreboardConfig): SportsProvider {
   const tag = `[${cfg.league.toLowerCase()} provider]`;
-  const baseUrl = `${ESPN_FOOTBALL}/${cfg.sport}`;
+  const baseUrl = `${ESPN_SPORTS}/${cfg.sportGroup ?? "football"}/${cfg.sport}`;
 
   async function espnFetch<T>(path: string): Promise<T | null> {
     try {
@@ -116,6 +119,7 @@ export function createEspnFootballProvider(cfg: EspnFootballConfig): SportsProvi
           externalId: event.id,
           league: cfg.league,
           startTime: new Date(event.date),
+          seasonType: event.season?.type,
           status: mapStatus(event.status?.type?.name ?? ""),
           homeTeamExternalId: home.team.id,
           awayTeamExternalId: away.team.id,

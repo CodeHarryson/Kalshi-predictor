@@ -34,7 +34,7 @@ interface TxLike {
 }
 
 interface MockDb {
-  game: { findMany: ReturnType<typeof vi.fn> };
+  game: { findMany: ReturnType<typeof vi.fn>; findFirst: ReturnType<typeof vi.fn> };
   teamRating: { upsert: ReturnType<typeof vi.fn> };
   $transaction: ReturnType<typeof vi.fn>;
 }
@@ -91,7 +91,7 @@ function makeMockDb(opts?: { existingRatings?: Map<string, number> }): {
   };
 
   const db: MockDb = {
-    game: { findMany: vi.fn() },
+    game: { findMany: vi.fn(), findFirst: vi.fn() },
     teamRating: { upsert: vi.fn() },
     $transaction: vi.fn(async (fnOrArr: unknown) => {
       if (typeof fnOrArr === "function") {

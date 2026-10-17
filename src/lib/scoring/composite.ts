@@ -1,7 +1,15 @@
 import { db } from "@/lib/db";
 import type { League } from "@/generated/prisma/enums";
-import { DEFAULT_RATING, matchOutcomeProbabilities, type MatchOutcomeProbabilities } from "./elo";
-import { teamInjuryPenaltyElo } from "./injuries";
+import {
+  DEFAULT_RATING,
+  ELO_CONFIG,
+  matchOutcomeProbabilities,
+  OFFSEASON_GAP_MS,
+  regressRating,
+  type MatchOutcomeProbabilities,
+} from "./elo";
+import { INJURY_SCALE, teamInjuryPenaltyElo } from "./injuries";
+import { applyLogitShift, getMatchupContext } from "./matchup";
 
 const RECENT_FORM_WINDOW = 5;
 const FORM_WEIGHT = 0.1; // max +/-5% nudge from recent-form delta
@@ -14,14 +22,20 @@ export interface GameProbabilityEstimate extends MatchOutcomeProbabilities {
   /** Elo points each side loses to injuries (already applied to homeWin/awayWin). */
   homeInjuryElo: number;
   awayInjuryElo: number;
+  /** Normalized average scoring margin over recent games (see matchup.ts). */
+  homeRecentMargin: number;
+  awayRecentMargin: number;
+  /** Normalized average margin of past meetings from the home side's view, and how many. */
+  h2hMargin: number;
+  h2hGames: number;
 }
 
-async function getInjuryPenalty(teamId: string): Promise<number> {
+async function getInjuryPenalty(teamId: string, league: League): Promise<number> {
   const rows = await db.injuryReport.findMany({
     where: { teamId },
     select: { availabilityLoss: true, impactElo: true },
   });
-  return teamInjuryPenaltyElo(rows);
+  return (INJURY_SCALE[league] ?? 1) * teamInjuryPenaltyElo(rows);
 }
 
 async function recentFormWinRate(teamId: string, beforeDate: Date): Promise<number> {
@@ -61,14 +75,35 @@ export async function estimateGameProbabilities(gameId: string): Promise<GamePro
   const game = await db.game.findUnique({ where: { id: gameId } });
   if (!game) return null;
 
-  const [homeRating, awayRating, homeForm, awayForm, homeInjuryElo, awayInjuryElo] = await Promise.all([
-    getRating(game.homeTeamId),
-    getRating(game.awayTeamId),
-    recentFormWinRate(game.homeTeamId, game.startTime),
-    recentFormWinRate(game.awayTeamId, game.startTime),
-    getInjuryPenalty(game.homeTeamId),
-    getInjuryPenalty(game.awayTeamId),
-  ]);
+  const [storedHome, storedAway, rawHomeForm, rawAwayForm, homeInjuryElo, awayInjuryElo, lastFinal] =
+    await Promise.all([
+      getRating(game.homeTeamId),
+      getRating(game.awayTeamId),
+      recentFormWinRate(game.homeTeamId, game.startTime),
+      recentFormWinRate(game.awayTeamId, game.startTime),
+      getInjuryPenalty(game.homeTeamId, game.league),
+      getInjuryPenalty(game.awayTeamId, game.league),
+      db.game.findFirst({
+        where: { league: game.league, status: "FINAL", startTime: { lt: game.startTime } },
+        orderBy: { startTime: "desc" },
+        select: { startTime: true },
+      }),
+    ]);
+
+  // Stored ratings only move when a game is processed, so before the first
+  // game of a new season they still carry last season's full spread. Apply
+  // the offseason pull toward the mean here, and ignore form from games a
+  // whole offseason ago. Once a new-season game is processed, the stored
+  // rating has been regressed itself and this stops applying.
+  const regression = ELO_CONFIG[game.league].offseasonRegression ?? 0;
+  const afterOffseason =
+    regression > 0 &&
+    lastFinal != null &&
+    game.startTime.getTime() - lastFinal.startTime.getTime() > OFFSEASON_GAP_MS;
+  const homeRating = afterOffseason ? regressRating(storedHome, regression) : storedHome;
+  const awayRating = afterOffseason ? regressRating(storedAway, regression) : storedAway;
+  const homeForm = afterOffseason ? 0.5 : rawHomeForm;
+  const awayForm = afterOffseason ? 0.5 : rawAwayForm;
 
   // Injuries only matter for games that haven't happened: the report is a
   // snapshot of right now, so applying it to a finished game would be wrong.
@@ -87,6 +122,16 @@ export async function estimateGameProbabilities(gameId: string): Promise<GamePro
   awayWin = clamp(awayWin, 0.01, 0.98);
   const draw = Math.max(1 - homeWin - awayWin, 0);
 
+  // Margin-based form / head-to-head: only for two-outcome leagues, where a
+  // logit shift on the home side's share is well defined.
+  const matchup = await getMatchupContext(game, afterOffseason);
+  if (matchup.logitShift !== 0 && draw === 0) {
+    const total = homeWin + awayWin;
+    const shifted = applyLogitShift(homeWin / total, matchup.logitShift);
+    homeWin = clamp(shifted * total, 0.01, 0.98);
+    awayWin = clamp((1 - shifted) * total, 0.01, 0.98);
+  }
+
   return {
     homeWin,
     draw,
@@ -97,6 +142,10 @@ export async function estimateGameProbabilities(gameId: string): Promise<GamePro
     awayRecentForm: awayForm,
     homeInjuryElo: homePenalty,
     awayInjuryElo: awayPenalty,
+    homeRecentMargin: matchup.homeRecentMargin,
+    awayRecentMargin: matchup.awayRecentMargin,
+    h2hMargin: matchup.h2hMargin,
+    h2hGames: matchup.h2hGames,
   };
 }
 
@@ -125,8 +174,17 @@ export function resolveMarketFavoredSide(
   const t = text.toLowerCase();
   if (/\btie\b|\bdraw\b/.test(t)) return "draw";
 
-  const homeNames = [homeTeamName, homeTeamShort].filter(Boolean).map((s) => s!.toLowerCase());
-  const awayNames = [awayTeamName, awayTeamShort].filter(Boolean).map((s) => s!.toLowerCase());
+  // Short, exact sub-titles ("New York J", "Washington St.", "Reg Time: Argentina")
+  // are resolved by token prefix first: it distinguishes the Jets from the
+  // Giants and Washington from Washington State, which substring checks can't.
+  const byTokens = sideFromSubTitle(text, homeTeamName, awayTeamName);
+  if (byTokens) return byTokens;
+
+  // Abbreviations under 3 characters ("ne", "la") are substrings of ordinary
+  // words ("new", "los angeles"), so they are never used for matching.
+  const usable = (s: string | null) => (s && s.length >= 3 ? s.toLowerCase() : null);
+  const homeNames = [usable(homeTeamName), usable(homeTeamShort)].filter((s): s is string => !!s);
+  const awayNames = [usable(awayTeamName), usable(awayTeamShort)].filter((s): s is string => !!s);
 
   const subjectMatch = t.match(/will\s+(?:the\s+)?([a-z0-9 .'-]+?)\s+(win|beat|defeat)/);
   if (subjectMatch) {
@@ -144,9 +202,46 @@ export function resolveMarketFavoredSide(
   return null;
 }
 
+// Whole-word search, so "kc" doesn't match inside another word.
 function indexOfOrInfinity(haystack: string, needle: string): number {
-  const idx = haystack.indexOf(needle);
-  return idx === -1 ? Infinity : idx;
+  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const m = new RegExp(`(^|[^a-z0-9])${escaped}($|[^a-z0-9])`).exec(haystack);
+  return m ? m.index + m[1].length : Infinity;
+}
+
+function tokens(s: string): string[] {
+  return s
+    .normalize("NFD")
+    .replace(/\p{M}+/gu, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+/**
+ * Number of team-name tokens left over when `sub` matches as a run of token
+ * prefixes ("st" matches "state", "j" matches "jets"), or null if it doesn't.
+ * Fewer leftovers = a tighter match, which separates "Michigan" (Michigan
+ * Wolverines, 1 left) from "Michigan State Spartans" (2 left).
+ */
+function prefixMatchLeftover(sub: string[], team: string[]): number | null {
+  for (let i = 0; i + sub.length <= team.length; i++) {
+    if (sub.every((tok, j) => team[i + j].startsWith(tok))) return team.length - sub.length;
+  }
+  return null;
+}
+
+function sideFromSubTitle(text: string, homeName: string, awayName: string): "home" | "away" | null {
+  // "Reg Time: Argentina" -> "Argentina"
+  const sub = tokens(text.split(":").pop() ?? text);
+  if (sub.length === 0 || sub.length > 5) return null;
+  const home = prefixMatchLeftover(sub, tokens(homeName));
+  const away = prefixMatchLeftover(sub, tokens(awayName));
+  if (home !== null && away === null) return "home";
+  if (away !== null && home === null) return "away";
+  if (home !== null && away !== null && home !== away) return home < away ? "home" : "away";
+  return null;
 }
 
 export type { League };

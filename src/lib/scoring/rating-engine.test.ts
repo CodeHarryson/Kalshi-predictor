@@ -27,6 +27,7 @@ vi.mock("@/lib/db", () => {
   const db = {
     game: {
       findMany: vi.fn(),
+      findFirst: vi.fn(), // previous applied game (offseason-gap check); undefined = none
     },
     teamRating: {
       upsert: vi.fn(),

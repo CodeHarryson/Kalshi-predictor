@@ -22,6 +22,8 @@ export interface ProviderGame {
   awayTeamExternalId: string;
   homeScore?: number;
   awayScore?: number;
+  /** ESPN season type: 1 preseason, 2 regular season, 3 postseason, 4 offseason. */
+  seasonType?: number;
 }
 
 export interface ProviderPlayerStat {

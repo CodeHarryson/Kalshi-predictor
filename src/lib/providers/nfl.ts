@@ -1,6 +1,6 @@
-import { createEspnFootballProvider } from "./espn-football";
+import { createEspnScoreboardProvider } from "./espn-scoreboard";
 
-export const nflProvider = createEspnFootballProvider({
+export const nflProvider = createEspnScoreboardProvider({
   league: "NFL",
   sport: "nfl",
   teamsLimit: 40,

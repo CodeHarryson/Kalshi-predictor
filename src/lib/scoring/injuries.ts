@@ -21,6 +21,24 @@ const ELO_PER_POINT: Partial<Record<League, number>> = {
   CFB: 25,
 };
 
+/**
+ * Multiplier on a team's injury penalty, set by comparing the model with
+ * Kalshi prices (scripts/calibrate-injuries.ts). Kalshi already prices each
+ * game's injuries, so the scale that best matches the market is a fair proxy
+ * for how much of the raw estimate to trust.
+ *  - NFL: best fit 0.4-0.5 on 27 games; flat between 0.5 and 0.75.
+ *  - NBA: the fit was 0 (penalties made the model agree with the market
+ *    LESS) but it is pre-season data, where stars rest and rosters are in
+ *    flux, so it is held at a cautious 0.25 pending in-season data.
+ *  - CFB: no injury data exists to calibrate against; held conservative.
+ * Re-run the script once a few weeks of the regular season are available.
+ */
+export const INJURY_SCALE: Partial<Record<League, number>> = {
+  NBA: 0.25,
+  NFL: 0.5,
+  CFB: 0.5,
+};
+
 /** Soft ceiling on a team's total penalty so a long injury list can't swamp Elo. */
 export const MAX_TEAM_INJURY_ELO = 250;
 

@@ -16,6 +16,15 @@ export interface LegFeatures {
    * didn't change the trained model's input dimension.
    */
   injuryEloDiff?: number;
+  /**
+   * Normalized recent scoring margin, this side minus the opponent, and the
+   * normalized head-to-head margin from this side's view (see matchup.ts).
+   * Same status as injuryEloDiff: logged, inside baseProbability to the
+   * extent their weights are non-zero, and not in featuresToVector.
+   */
+  recentMarginDiff?: number;
+  h2hMargin?: number;
+  h2hGames?: number;
 }
 
 export interface LegScore {
@@ -100,6 +109,14 @@ export async function scoreGameSideProbability(
         : side === "away"
           ? est.awayInjuryElo - est.homeInjuryElo
           : 0,
+    recentMarginDiff:
+      side === "home"
+        ? est.homeRecentMargin - est.awayRecentMargin
+        : side === "away"
+          ? est.awayRecentMargin - est.homeRecentMargin
+          : 0,
+    h2hMargin: side === "home" ? est.h2hMargin : side === "away" ? -est.h2hMargin : 0,
+    h2hGames: est.h2hGames,
   };
 
   const game = await db.game.findUnique({ where: { id: gameId }, select: { league: true } });

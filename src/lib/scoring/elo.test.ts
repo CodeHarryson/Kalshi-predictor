@@ -6,7 +6,32 @@ import {
   resultToHomeScore,
   ELO_CONFIG,
   DEFAULT_RATING,
+  marginMultiplier,
 } from "./elo";
+
+describe("margin of victory", () => {
+  it("grows with the margin and is capped", () => {
+    expect(marginMultiplier(20, 0, 30)).toBeGreaterThan(marginMultiplier(3, 0, 30));
+    expect(marginMultiplier(100, 0, 30)).toBeCloseTo(marginMultiplier(30, 0, 30), 9);
+  });
+
+  it("is damped when the winner was already far stronger", () => {
+    expect(marginMultiplier(14, 300, 30)).toBeLessThan(marginMultiplier(14, 0, 30));
+    expect(marginMultiplier(14, -300, 30)).toBeGreaterThan(marginMultiplier(14, 0, 30));
+  });
+
+  it("makes a blowout move NFL ratings more than a one-point win, symmetrically", () => {
+    const narrow = updateElo("NFL", 1500, 1500, 1, 1);
+    const blowout = updateElo("NFL", 1500, 1500, 1, 28);
+    expect(blowout.homeRating - 1500).toBeGreaterThan(narrow.homeRating - 1500);
+    expect(blowout.homeRating - 1500).toBeCloseTo(1500 - blowout.awayRating, 9);
+  });
+
+  it("ignores the margin for leagues that don't use it (soccer) and when omitted", () => {
+    expect(updateElo("EPL", 1500, 1500, 1, 5)).toEqual(updateElo("EPL", 1500, 1500, 1));
+    expect(updateElo("NFL", 1500, 1500, 1)).toEqual(updateElo("NFL", 1500, 1500, 1, undefined));
+  });
+});
 
 describe("eloExpectedScore", () => {
   it("returns 0.5 for equal ratings", () => {
@@ -18,8 +43,10 @@ describe("matchOutcomeProbabilities", () => {
   it("NBA at equal ratings: no draw, home advantage applied", () => {
     const p = matchOutcomeProbabilities("NBA", 1500, 1500);
     expect(p.draw).toBe(0);
-    // NBA homeAdvantage=100, so expected = 1 / (1 + 10^(-100/400)) ≈ 0.6403
-    expect(p.homeWin).toBeCloseTo(0.6403, 3);
+    // Equal ratings, so only the configured home bonus separates the sides.
+    const expected = 1 / (1 + Math.pow(10, -ELO_CONFIG.NBA.homeAdvantage / 400));
+    expect(p.homeWin).toBeCloseTo(expected, 6);
+    expect(p.homeWin).toBeGreaterThan(0.5);
     expect(p.homeWin + p.awayWin).toBeCloseTo(1, 6);
   });
 
