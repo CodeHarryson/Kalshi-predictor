@@ -41,6 +41,10 @@ describe("matchMarketByNames", () => {
     expect(matchMarketByNames(["Indiana", "Michigan"], close, games)?.id).toBe("g2");
   });
 
+  it("expands Kalshi's 'St.' to 'State'", () => {
+    expect(matchMarketByNames(["Boise St.", "Washington St."], close, games)?.id).toBe("g1");
+  });
+
   it("returns null when ambiguous or incomplete", () => {
     const both = [...games, game("g3", "2026-10-24T20:00:00Z", miss, indiana)];
     // "Michigan" is also inside "Michigan State Spartans" -> two candidates -> no guess.

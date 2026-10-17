@@ -120,7 +120,12 @@ export function matchMarketByNames(
   closeTime: Date | null,
   candidateGames: (Game & { homeTeam: Team; awayTeam: Team })[]
 ): Game | null {
-  const names = [...new Set(subTitles.filter((s) => s && !/^tie\b/i.test(s)))];
+  // Kalshi abbreviates "State" ("Boise St.", "NC St."); ESPN spells it out.
+  // Only a St. that follows another word, so "St. John's" is left alone.
+  const expandState = (s: string) => s.replace(/(?<=\S)\s+St\.?(?=\s|$)/g, " State");
+  const names = [
+    ...new Set(subTitles.filter((s) => s && !/^tie\b/i.test(s)).map(expandState)),
+  ];
   if (names.length !== 2) return null;
 
   const hit = (team: Team, name: string) => haystackContainsCandidate(team.name, name);
