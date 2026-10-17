@@ -174,7 +174,14 @@ export async function buildParlaySuggestions(
   // Scanned separately here, scoped to `league` the same way the games
   // query is (these rows are only ever synced with league: "WORLD_CUP").
   const playerGoalMarkets = await db.kalshiMarket.findMany({
-    where: { league, propKind: "PLAYER_GOALS", gameId: null },
+    // Sync only upserts markets Kalshi still lists as open and never retires
+    // the rest, so a past closeTime is the only signal a market is dead.
+    where: {
+      league,
+      propKind: "PLAYER_GOALS",
+      gameId: null,
+      closeTime: { gt: new Date() },
+    },
   });
   for (const market of playerGoalMarkets) {
     if (market.yesPrice == null || !market.propSubjectExternalId) continue;
