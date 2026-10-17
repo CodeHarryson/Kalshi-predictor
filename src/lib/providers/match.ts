@@ -1,4 +1,5 @@
 import type { Team, Game } from "@/generated/prisma/client";
+import type { League } from "@/generated/prisma/enums";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 // Kalshi's per-game moneyline markets don't always close at kickoff - some
@@ -19,7 +20,21 @@ function titleMentionsTeam(title: string, team: Team): boolean {
   return candidates.some((c) => t.includes(normalize(c)));
 }
 
-const MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+// Our Team.shortName -> the code Kalshi uses in event tickers, where they
+// differ. Football-data codes are the long-standing source of mismatches.
+const KALSHI_CODE_ALIASES: Partial<Record<League, Record<string, string>>> = {
+  LALIGA: {
+    FCB: "BAR",
+    BET: "RBB",
+    MAL: "MCF",
+    RAY: "RVC",
+    CEL: "RCC",
+    VAL: "VCF",
+    ATL: "ATM",
+  },
+};
+
+const MONTHS =["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
 
 /**
  * Fallback for markets whose title names only one side ("Leeds United wins",
@@ -30,7 +45,8 @@ const MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "
  */
 export function matchMarketByTicker(
   ticker: string,
-  candidateGames: (Game & { homeTeam: Team; awayTeam: Team })[]
+  candidateGames: (Game & { homeTeam: Team; awayTeam: Team })[],
+  league?: League
 ): Game | null {
   const m = /^[A-Z0-9]+-(\d{2})([A-Z]{3})(\d{2})([A-Z0-9]+?)(?:-[A-Z0-9]+)?$/.exec(ticker);
   if (!m) return null;
@@ -39,11 +55,20 @@ export function matchMarketByTicker(
   const eventDay = Date.UTC(2000 + Number(m[1]), month, Number(m[3]));
   const codes = m[4];
 
+  const aliases = (league && KALSHI_CODE_ALIASES[league]) || {};
+  const codesOf = (t: Team): string[] => {
+    const short = t.shortName?.toUpperCase();
+    if (!short) return [];
+    return aliases[short] ? [short, aliases[short]] : [short];
+  };
+
   const matches = candidateGames.filter((g) => {
-    const home = g.homeTeam.shortName?.toUpperCase();
-    const away = g.awayTeam.shortName?.toUpperCase();
-    if (!home || !away) return false;
-    if (codes !== home + away && codes !== away + home) return false;
+    const homes = codesOf(g.homeTeam);
+    const aways = codesOf(g.awayTeam);
+    const hit = homes.some((h) =>
+      aways.some((a) => codes === h + a || codes === a + h)
+    );
+    if (!hit) return false;
     return Math.abs(g.startTime.getTime() - eventDay) <= 2 * DAY_MS;
   });
 

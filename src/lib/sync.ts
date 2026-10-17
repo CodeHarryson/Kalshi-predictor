@@ -134,7 +134,7 @@ export async function syncKalshiMarketsForLeague(league: League): Promise<Kalshi
     const closeTime = m.close_time ? new Date(m.close_time) : null;
     const matchedGame =
       matchMarketToGame(m.title, closeTime, candidateGames) ??
-      matchMarketByTicker(m.ticker, candidateGames);
+      matchMarketByTicker(m.ticker, candidateGames, league);
     const yesPrice = m.yes_ask ?? m.last_price ?? null;
     const noPrice = m.no_ask ?? (yesPrice != null ? 100 - yesPrice : null);
 

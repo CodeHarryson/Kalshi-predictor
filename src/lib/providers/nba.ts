@@ -46,8 +46,15 @@ function mapStatus(raw: string): ProviderGame["status"] {
   if (s.includes("final")) return "FINAL";
   if (s.includes("postponed")) return "POSTPONED";
   if (s.includes("canceled") || s.includes("cancelled")) return "CANCELED";
-  if (/^\d/.test(s) || s.includes("qtr") || s.includes("half")) return "LIVE";
+  // Upcoming games carry their tip-off as an ISO timestamp in `status` (e.g.
+  // "2026-10-22T23:30:00Z"), which must not be mistaken for a live clock.
+  if (s.includes("qtr") || s.includes("half") || s === "in progress") return "LIVE";
   return "SCHEDULED";
+}
+
+// `date` is date-only; the real tip-off time is the ISO `status` when present.
+function tipoff(g: { date: string; status: string }): Date {
+  return /^\d{4}-\d{2}-\d{2}T/.test(g.status) ? new Date(g.status) : new Date(g.date);
 }
 
 export const nbaProvider: SportsProvider = {
@@ -85,7 +92,7 @@ export const nbaProvider: SportsProvider = {
         games.push({
           externalId: String(g.id),
           league: "NBA",
-          startTime: new Date(g.date),
+          startTime: tipoff(g),
           status: mapStatus(g.status),
           homeTeamExternalId: String(g.home_team.id),
           awayTeamExternalId: String(g.visitor_team.id),

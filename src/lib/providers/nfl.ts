@@ -69,13 +69,22 @@ export const nflProvider: SportsProvider = {
   },
 
   async fetchGames(_league, range: DateRange): Promise<ProviderGame[]> {
-    const data = await espnFetch<EspnScoreboardResponse>(
-      `/scoreboard?dates=${fmt(range.startDate)}-${fmt(range.endDate)}&limit=100`
-    );
-    if (!data) return [];
+    // ESPN's football scoreboard rejects `dates=A-B` ranges with HTTP 400, so
+    // query one day at a time (a week of days per batch) and dedupe by event id.
+    const days: string[] = [];
+    for (let t = range.startDate.getTime(); t <= range.endDate.getTime(); t += 86_400_000) {
+      days.push(fmt(new Date(t)));
+    }
+    const events = new Map<string, EspnEvent>();
+    for (let i = 0; i < days.length; i += 7) {
+      const batch = await Promise.all(
+        days.slice(i, i + 7).map((d) => espnFetch<EspnScoreboardResponse>(`/scoreboard?dates=${d}&limit=100`))
+      );
+      for (const data of batch) for (const e of data?.events ?? []) events.set(e.id, e);
+    }
 
     const games: ProviderGame[] = [];
-    for (const event of data.events ?? []) {
+    for (const event of events.values()) {
       const competitors = event.competitions?.[0]?.competitors ?? [];
       const home = competitors.find((c) => c.homeAway === "home");
       const away = competitors.find((c) => c.homeAway === "away");
