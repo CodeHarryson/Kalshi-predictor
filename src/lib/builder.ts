@@ -52,7 +52,13 @@ export async function buildParlaySuggestions(
   const candidates: CandidateLeg[] = [];
   const outcomeIndex = new Map<string, number>(); // two-way game id -> index of its kept pick
 
+  let scored = 0;
   for (const game of games) {
+    // Scoring a game is a chain of database calls that resolve without ever
+    // waiting on I/O, so a long run (a few hundred CFB games) would starve the
+    // event loop: no other request - not even a click on a nav link - is
+    // served until it finishes. Hand control back every couple of games.
+    if (++scored % 2 === 0) await new Promise<void>((resolve) => setImmediate(resolve));
     for (const market of game.markets) {
       if (market.yesPrice == null) continue;
 

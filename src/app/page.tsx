@@ -1,3 +1,4 @@
+import { Suspense, cache } from "react";
 import Link from "next/link";
 import { db } from "@/lib/db";
 import { ALL_LEAGUES } from "@/lib/sync";
@@ -49,111 +50,74 @@ function formatKickoff(date: Date) {
 }
 
 async function upcomingByLeague() {
-  const games = await db.game.findMany({
-    where: {
-      status: "SCHEDULED",
-      startTime: { gte: new Date() },
-      markets: { some: {} },
-    },
-    include: { homeTeam: true, awayTeam: true, markets: true },
-    orderBy: { startTime: "asc" },
-    take: 60,
-  });
+  // One query per league: a single query for "the next N games overall" is
+  // filled entirely by whichever league plays the most games soonest (CFB has
+  // ~100 on a Saturday), pushing every other league off the dashboard.
+  const perLeague = await Promise.all(
+    ALL_LEAGUES.map((league) =>
+      db.game.findMany({
+        where: {
+          league,
+          status: "SCHEDULED",
+          startTime: { gte: new Date() },
+          markets: { some: {} },
+        },
+        include: { homeTeam: true, awayTeam: true, markets: true },
+        orderBy: { startTime: "asc" },
+        take: 5,
+      })
+    )
+  );
 
-  const byLeague = new Map<string, typeof games>();
-  for (const game of games) {
-    const list = byLeague.get(game.league) ?? [];
-    if (list.length < 5) {
-      list.push(game);
-      byLeague.set(game.league, list);
-    }
-  }
+  const byLeague = new Map<string, (typeof perLeague)[number]>();
+  ALL_LEAGUES.forEach((league, i) => {
+    if (perLeague[i].length > 0) byLeague.set(league, perLeague[i]);
+  });
   return byLeague;
 }
 
-export default async function DashboardPage() {
-  const [byLeague, recentParlays, combos, balance] = await Promise.all([
-    upcomingByLeague(),
-    db.parlay.findMany({
-      include: { legs: true },
-      orderBy: { createdAt: "desc" },
-      take: 8,
-    }),
-    buildRecommendedCombos(ALL_LEAGUES, { limit: 6 }),
-    fetchAccountBalance(),
-  ]);
+// Kalshi's balance endpoint is slow and the combo scoring is heavy, so both
+// stream in behind Suspense instead of holding up the whole dashboard (and
+// with it, navigation back to it). cache() shares one balance call per request.
+const getBalance = cache(fetchAccountBalance);
 
-  const leaguesWithGames = ALL_LEAGUES.filter((l) => byLeague.has(l));
-
+async function BalanceBadge() {
+  const balance = await getBalance();
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
-          <p className="text-sm text-muted-foreground">
-            Upcoming games with open Kalshi markets and recent parlay activity.
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <Badge variant="outline">
-            Kalshi balance:{" "}
-            {balance ? formatDollars(balance.balanceCents) : "unavailable"}
-          </Badge>
-          <AdminTokenGate />
-        </div>
-      </div>
+    <Badge variant="outline">
+      Kalshi balance: {balance ? formatDollars(balance.balanceCents) : "unavailable"}
+    </Badge>
+  );
+}
 
-      <section className="flex flex-col gap-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-medium">Upcoming games</h2>
-          <Button
-            variant="link"
-            size="sm"
-            nativeButton={false}
-            render={<Link href="/builder" />}
-          >
-            Build a parlay
-          </Button>
-        </div>
+function CombosFallback() {
+  return (
+    <section className="flex flex-col gap-4">
+      <h2 className="text-lg font-medium">Recommended combos</h2>
+      <Card>
+        <CardContent className="py-8 text-center text-sm text-muted-foreground">
+          Scoring games across all leagues…
+        </CardContent>
+      </Card>
+    </section>
+  );
+}
 
-        {leaguesWithGames.length === 0 ? (
-          <Card>
-            <CardContent className="py-8 text-center text-sm text-muted-foreground">
-              No upcoming games with linked markets yet. Run a sports sync and a
-              Kalshi sync to populate data.
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="grid gap-4 md:grid-cols-2">
-            {leaguesWithGames.map((league) => (
-              <Card key={league}>
-                <CardHeader>
-                  <CardTitle>{LEAGUE_LABEL[league] ?? league}</CardTitle>
-                  <CardDescription>Next {byLeague.get(league)!.length} games</CardDescription>
-                </CardHeader>
-                <CardContent className="flex flex-col gap-2">
-                  {byLeague.get(league)!.map((game) => (
-                    <div
-                      key={game.id}
-                      className="flex items-center justify-between gap-2 text-sm"
-                    >
-                      <span className="truncate">
-                        {game.awayTeam.shortName ?? game.awayTeam.name} @{" "}
-                        {game.homeTeam.shortName ?? game.homeTeam.name}
-                      </span>
-                      <span className="flex shrink-0 items-center gap-2 text-muted-foreground">
-                        <Badge variant="outline">{game.markets.length} mkt</Badge>
-                        {formatKickoff(game.startTime)}
-                      </span>
-                    </div>
-                  ))}
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        )}
-      </section>
+// Scoring every upcoming game takes seconds, and the inputs only change when a
+// sync runs, so reuse a recent result instead of recomputing on every visit.
+const COMBOS_TTL_MS = 60_000;
+let combosCache: { at: number; value: Awaited<ReturnType<typeof buildRecommendedCombos>> } | null = null;
 
+async function getRecommendedCombos() {
+  if (combosCache && Date.now() - combosCache.at < COMBOS_TTL_MS) return combosCache.value;
+  const value = await buildRecommendedCombos(ALL_LEAGUES, { limit: 6 });
+  combosCache = { at: Date.now(), value };
+  return value;
+}
+
+async function CombosSection() {
+  const [combos, balance] = await Promise.all([getRecommendedCombos(), getBalance()]);
+  return (
       <section className="flex flex-col gap-4">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-medium">Recommended combos</h2>
@@ -287,6 +251,92 @@ export default async function DashboardPage() {
           </Card>
         )}
       </section>
+  );
+}
+
+export default async function DashboardPage() {
+  const [byLeague, recentParlays] = await Promise.all([
+    upcomingByLeague(),
+    db.parlay.findMany({
+      include: { legs: true },
+      orderBy: { createdAt: "desc" },
+      take: 8,
+    }),
+  ]);
+
+  const leaguesWithGames = ALL_LEAGUES.filter((l) => byLeague.has(l));
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
+          <p className="text-sm text-muted-foreground">
+            Upcoming games with open Kalshi markets and recent parlay activity.
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          <Suspense fallback={<Badge variant="outline">Kalshi balance: …</Badge>}>
+            <BalanceBadge />
+          </Suspense>
+          <AdminTokenGate />
+        </div>
+      </div>
+
+      <section className="flex flex-col gap-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-medium">Upcoming games</h2>
+          <Button
+            variant="link"
+            size="sm"
+            nativeButton={false}
+            render={<Link href="/builder" />}
+          >
+            Build a parlay
+          </Button>
+        </div>
+
+        {leaguesWithGames.length === 0 ? (
+          <Card>
+            <CardContent className="py-8 text-center text-sm text-muted-foreground">
+              No upcoming games with linked markets yet. Run a sports sync and a
+              Kalshi sync to populate data.
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="grid gap-4 md:grid-cols-2">
+            {leaguesWithGames.map((league) => (
+              <Card key={league}>
+                <CardHeader>
+                  <CardTitle>{LEAGUE_LABEL[league] ?? league}</CardTitle>
+                  <CardDescription>Next {byLeague.get(league)!.length} games</CardDescription>
+                </CardHeader>
+                <CardContent className="flex flex-col gap-2">
+                  {byLeague.get(league)!.map((game) => (
+                    <div
+                      key={game.id}
+                      className="flex items-center justify-between gap-2 text-sm"
+                    >
+                      <span className="truncate">
+                        {game.awayTeam.shortName ?? game.awayTeam.name} @{" "}
+                        {game.homeTeam.shortName ?? game.homeTeam.name}
+                      </span>
+                      <span className="flex shrink-0 items-center gap-2 text-muted-foreground">
+                        <Badge variant="outline">{game.markets.length} mkt</Badge>
+                        {formatKickoff(game.startTime)}
+                      </span>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <Suspense fallback={<CombosFallback />}>
+        <CombosSection />
+      </Suspense>
 
       <section className="flex flex-col gap-4">
         <div className="flex items-center justify-between">

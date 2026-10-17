@@ -180,7 +180,7 @@ function signRequest(method: string, path: string, timestampMs: string): string 
   return signature.toString("base64");
 }
 
-async function kalshiFetch<T>(path: string): Promise<T | null> {
+async function kalshiFetch<T>(path: string, opts?: { timeoutMs?: number }): Promise<T | null> {
   if (!hasCredentials()) {
     console.warn("[kalshi provider] KALSHI_KEY_ID and KALSHI_PRIVATE_KEY_PATH not set, skipping fetch");
     return null;
@@ -213,6 +213,7 @@ async function kalshiFetch<T>(path: string): Promise<T | null> {
         "KALSHI-ACCESS-SIGNATURE": signature,
         "KALSHI-ACCESS-TIMESTAMP": timestampMs,
       },
+      signal: opts?.timeoutMs ? AbortSignal.timeout(opts.timeoutMs) : undefined,
     });
     const ms = Date.now() - start;
     if (!res.ok) {
@@ -315,7 +316,25 @@ export function isKalshiConfigured(): boolean {
 // /portfolio/balance returns `balance` as a plain integer in cents per
 // Kalshi's docs - no dollars-to-cents conversion needed here. Verify
 // against a live response if this ever comes back undefined.
+//
+// The dashboard awaits this on every load, and Kalshi's balance endpoint can
+// take 10-20s. A slow response must not freeze navigation, so the call is
+// capped, and the last good value is reused for a minute (and as a fallback
+// when a later call times out) rather than showing "unavailable".
+const BALANCE_TIMEOUT_MS = 3_000;
+const BALANCE_CACHE_MS = 60_000;
+let cachedBalance: { balanceCents: number; at: number } | null = null;
+
 export async function fetchAccountBalance(): Promise<{ balanceCents: number } | null> {
-  const data = await kalshiFetch<{ balance: number }>("/portfolio/balance");
-  return data && typeof data.balance === "number" ? { balanceCents: data.balance } : null;
+  if (cachedBalance && Date.now() - cachedBalance.at < BALANCE_CACHE_MS) {
+    return { balanceCents: cachedBalance.balanceCents };
+  }
+  const data = await kalshiFetch<{ balance: number }>("/portfolio/balance", {
+    timeoutMs: BALANCE_TIMEOUT_MS,
+  });
+  if (data && typeof data.balance === "number") {
+    cachedBalance = { balanceCents: data.balance, at: Date.now() };
+    return { balanceCents: data.balance };
+  }
+  return cachedBalance ? { balanceCents: cachedBalance.balanceCents } : null;
 }
