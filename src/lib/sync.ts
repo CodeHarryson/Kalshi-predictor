@@ -6,7 +6,7 @@ import { nflProvider } from "./providers/nfl";
 import { soccerProvider } from "./providers/soccer";
 import type { SportsProvider } from "./providers/types";
 import { fetchOpenMarkets, fetchOpenPropMarkets, isKalshiConfigured } from "./providers/kalshi";
-import { matchMarketToGame } from "./providers/match";
+import { matchMarketByTicker, matchMarketToGame } from "./providers/match";
 import { parsePropTicker } from "./providers/kalshi-props";
 import { haystackContainsCandidate } from "./providers/text-match";
 import { matchFixtureToGame } from "./providers/fixture-match";
@@ -132,7 +132,9 @@ export async function syncKalshiMarketsForLeague(league: League): Promise<Kalshi
   let marketsUpserted = 0;
   for (const m of markets) {
     const closeTime = m.close_time ? new Date(m.close_time) : null;
-    const matchedGame = matchMarketToGame(m.title, closeTime, candidateGames);
+    const matchedGame =
+      matchMarketToGame(m.title, closeTime, candidateGames) ??
+      matchMarketByTicker(m.ticker, candidateGames);
     const yesPrice = m.yes_ask ?? m.last_price ?? null;
     const noPrice = m.no_ask ?? (yesPrice != null ? 100 - yesPrice : null);
 

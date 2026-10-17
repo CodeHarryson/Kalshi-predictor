@@ -19,6 +19,37 @@ function titleMentionsTeam(title: string, team: Team): boolean {
   return candidates.some((c) => t.includes(normalize(c)));
 }
 
+const MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+
+/**
+ * Fallback for markets whose title names only one side ("Leeds United wins",
+ * "Tie is the result"). Kalshi's event ticker encodes the matchup, e.g.
+ * KXEPLGAME-26OCT18LEEMUN = date 2026-10-18 + team codes LEE, MUN, which line
+ * up with our Team.shortName. Date is matched within a day to absorb UTC vs
+ * local-kickoff differences.
+ */
+export function matchMarketByTicker(
+  ticker: string,
+  candidateGames: (Game & { homeTeam: Team; awayTeam: Team })[]
+): Game | null {
+  const m = /^[A-Z0-9]+-(\d{2})([A-Z]{3})(\d{2})([A-Z0-9]+?)(?:-[A-Z0-9]+)?$/.exec(ticker);
+  if (!m) return null;
+  const month = MONTHS.indexOf(m[2]);
+  if (month < 0) return null;
+  const eventDay = Date.UTC(2000 + Number(m[1]), month, Number(m[3]));
+  const codes = m[4];
+
+  const matches = candidateGames.filter((g) => {
+    const home = g.homeTeam.shortName?.toUpperCase();
+    const away = g.awayTeam.shortName?.toUpperCase();
+    if (!home || !away) return false;
+    if (codes !== home + away && codes !== away + home) return false;
+    return Math.abs(g.startTime.getTime() - eventDay) <= 2 * DAY_MS;
+  });
+
+  return matches.length === 1 ? matches[0] : null;
+}
+
 /**
  * Matches a Kalshi market to a game by checking whether both the home and
  * away team names appear in the market title, restricted to games within a
