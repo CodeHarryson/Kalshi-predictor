@@ -29,6 +29,7 @@ export const dynamic = "force-dynamic";
 const LEAGUE_LABEL: Record<string, string> = {
   NBA: "NBA",
   NFL: "NFL",
+  CFB: "College Football",
   EPL: "Premier League",
   LALIGA: "La Liga",
   WORLD_CUP: "World Cup",

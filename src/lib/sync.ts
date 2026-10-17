@@ -3,6 +3,7 @@ import type { GameStatus, League } from "@/generated/prisma/enums";
 import type { Game as GameRow, Team as TeamRow } from "@/generated/prisma/client";
 import { nbaProvider } from "./providers/nba";
 import { nflProvider } from "./providers/nfl";
+import { cfbProvider } from "./providers/cfb";
 import { soccerProvider } from "./providers/soccer";
 import type { SportsProvider } from "./providers/types";
 import { fetchOpenMarkets, fetchOpenPropMarkets, isKalshiConfigured } from "./providers/kalshi";
@@ -13,11 +14,12 @@ import { matchFixtureToGame } from "./providers/fixture-match";
 import { fetchEspnGameStats } from "./providers/espn-soccer-stats";
 import { recomputeRatingsForLeague } from "./scoring/rating-engine";
 
-export const ALL_LEAGUES: League[] = ["NBA", "NFL", "EPL", "LALIGA", "WORLD_CUP"];
+export const ALL_LEAGUES: League[] = ["NBA", "NFL", "CFB", "EPL", "LALIGA", "WORLD_CUP"];
 
 const PROVIDER_BY_LEAGUE: Record<League, SportsProvider> = {
   NBA: nbaProvider,
   NFL: nflProvider,
+  CFB: cfbProvider,
   EPL: soccerProvider,
   LALIGA: soccerProvider,
   WORLD_CUP: soccerProvider,

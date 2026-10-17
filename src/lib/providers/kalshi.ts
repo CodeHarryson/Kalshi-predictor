@@ -253,6 +253,7 @@ async function kalshiFetch<T>(path: string): Promise<T | null> {
 const SERIES_PREFIX: Record<League, string[]> = {
   NBA: ["KXNBAGAME"],
   NFL: ["KXNFLGAME"],
+  CFB: ["KXNCAAFGAME"],
   EPL: ["KXEPLGAME"],
   LALIGA: ["KXLALIGAGAME"],
   WORLD_CUP: ["KXWCGAME"],

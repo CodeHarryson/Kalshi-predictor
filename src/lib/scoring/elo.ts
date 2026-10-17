@@ -12,6 +12,8 @@ interface LeagueEloConfig {
 export const ELO_CONFIG: Record<League, LeagueEloConfig> = {
   NBA: { k: 20, homeAdvantage: 100, hasDraws: false, baseDrawProbability: 0 },
   NFL: { k: 25, homeAdvantage: 55, hasDraws: false, baseDrawProbability: 0 },
+  // College home-field edge is larger than the NFL's; starting estimate, not fitted.
+  CFB: { k: 25, homeAdvantage: 70, hasDraws: false, baseDrawProbability: 0 },
   EPL: { k: 22, homeAdvantage: 60, hasDraws: true, baseDrawProbability: 0.26 },
   LALIGA: { k: 22, homeAdvantage: 60, hasDraws: true, baseDrawProbability: 0.26 },
   WORLD_CUP: { k: 22, homeAdvantage: 40, hasDraws: true, baseDrawProbability: 0.24 },

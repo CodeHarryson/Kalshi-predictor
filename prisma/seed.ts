@@ -18,6 +18,7 @@ const TEAMS: Record<League, { name: string; shortName: string; externalId: strin
     { name: "San Francisco 49ers", shortName: "SF", externalId: "seed-nfl-sf" },
     { name: "Buffalo Bills", shortName: "BUF", externalId: "seed-nfl-buf" },
   ],
+  CFB: [], // no demo teams; real ones come from the ESPN sync
   EPL: [
     { name: "Arsenal", shortName: "ARS", externalId: "seed-epl-ars" },
     { name: "Manchester City", shortName: "MCI", externalId: "seed-epl-mci" },

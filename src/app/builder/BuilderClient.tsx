@@ -44,6 +44,7 @@ interface BuilderClientProps {
 const LEAGUES = [
   { value: "NFL", label: "NFL" },
   { value: "NBA", label: "NBA" },
+  { value: "CFB", label: "College Football" },
   { value: "EPL", label: "Premier League" },
   { value: "LALIGA", label: "La Liga" },
   { value: "WORLD_CUP", label: "World Cup" },

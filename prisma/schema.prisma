@@ -10,6 +10,7 @@ datasource db {
 enum League {
   NBA
   NFL
+  CFB
   EPL
   LALIGA
   WORLD_CUP
