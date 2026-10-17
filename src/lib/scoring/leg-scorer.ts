@@ -9,6 +9,13 @@ export interface LegFeatures {
   ratingDiffNorm: number;
   isHome: number;
   recentFormDiff: number;
+  /**
+   * Elo points this side loses to injuries minus the opponent's (positive =
+   * this side is more hurt). Logged for analysis only: it is already inside
+   * baseProbability and deliberately NOT in featuresToVector, so adding it
+   * didn't change the trained model's input dimension.
+   */
+  injuryEloDiff?: number;
 }
 
 export interface LegScore {
@@ -87,6 +94,12 @@ export async function scoreGameSideProbability(
     ratingDiffNorm: ratingDiff / 400,
     isHome: side === "home" ? 1 : side === "away" ? 0 : 0.5,
     recentFormDiff: formDiff,
+    injuryEloDiff:
+      side === "home"
+        ? est.homeInjuryElo - est.awayInjuryElo
+        : side === "away"
+          ? est.awayInjuryElo - est.homeInjuryElo
+          : 0,
   };
 
   const game = await db.game.findUnique({ where: { id: gameId }, select: { league: true } });

@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import type { League } from "@/generated/prisma/enums";
 import { DEFAULT_RATING, matchOutcomeProbabilities, type MatchOutcomeProbabilities } from "./elo";
+import { teamInjuryPenaltyElo } from "./injuries";
 
 const RECENT_FORM_WINDOW = 5;
 const FORM_WEIGHT = 0.1; // max +/-5% nudge from recent-form delta
@@ -10,6 +11,17 @@ export interface GameProbabilityEstimate extends MatchOutcomeProbabilities {
   awayRating: number;
   homeRecentForm: number; // win rate over last N games, 0-1
   awayRecentForm: number;
+  /** Elo points each side loses to injuries (already applied to homeWin/awayWin). */
+  homeInjuryElo: number;
+  awayInjuryElo: number;
+}
+
+async function getInjuryPenalty(teamId: string): Promise<number> {
+  const rows = await db.injuryReport.findMany({
+    where: { teamId },
+    select: { availabilityLoss: true, impactElo: true },
+  });
+  return teamInjuryPenaltyElo(rows);
 }
 
 async function recentFormWinRate(teamId: string, beforeDate: Date): Promise<number> {
@@ -49,14 +61,22 @@ export async function estimateGameProbabilities(gameId: string): Promise<GamePro
   const game = await db.game.findUnique({ where: { id: gameId } });
   if (!game) return null;
 
-  const [homeRating, awayRating, homeForm, awayForm] = await Promise.all([
+  const [homeRating, awayRating, homeForm, awayForm, homeInjuryElo, awayInjuryElo] = await Promise.all([
     getRating(game.homeTeamId),
     getRating(game.awayTeamId),
     recentFormWinRate(game.homeTeamId, game.startTime),
     recentFormWinRate(game.awayTeamId, game.startTime),
+    getInjuryPenalty(game.homeTeamId),
+    getInjuryPenalty(game.awayTeamId),
   ]);
 
-  const base = matchOutcomeProbabilities(game.league, homeRating, awayRating);
+  // Injuries only matter for games that haven't happened: the report is a
+  // snapshot of right now, so applying it to a finished game would be wrong.
+  const applyInjuries = game.status === "SCHEDULED" || game.status === "LIVE";
+  const homePenalty = applyInjuries ? homeInjuryElo : 0;
+  const awayPenalty = applyInjuries ? awayInjuryElo : 0;
+
+  const base = matchOutcomeProbabilities(game.league, homeRating - homePenalty, awayRating - awayPenalty);
 
   const formDelta = homeForm - awayForm; // -1..1
   const adjustment = clamp(formDelta * FORM_WEIGHT, -0.05, 0.05);
@@ -75,6 +95,8 @@ export async function estimateGameProbabilities(gameId: string): Promise<GamePro
     awayRating,
     homeRecentForm: homeForm,
     awayRecentForm: awayForm,
+    homeInjuryElo: homePenalty,
+    awayInjuryElo: awayPenalty,
   };
 }
 

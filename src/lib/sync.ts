@@ -4,6 +4,7 @@ import type { Game as GameRow, Team as TeamRow } from "@/generated/prisma/client
 import { nbaProvider } from "./providers/nba";
 import { nflProvider } from "./providers/nfl";
 import { cfbProvider } from "./providers/cfb";
+import { syncInjuriesForLeague } from "./injury-sync";
 import { soccerProvider } from "./providers/soccer";
 import type { SportsProvider } from "./providers/types";
 import { fetchOpenMarkets, fetchOpenPropMarkets, isKalshiConfigured } from "./providers/kalshi";
@@ -30,6 +31,7 @@ export interface SportsSyncSummary {
   teamsUpserted: number;
   gamesUpserted: number;
   ratingsApplied: number;
+  injuriesStored: number;
 }
 
 export async function syncLeagueSportsData(
@@ -101,7 +103,15 @@ export async function syncLeagueSportsData(
 
   const ratingsApplied = await recomputeRatingsForLeague(league);
 
-  return { league, teamsUpserted: teamIdByExternal.size, gamesUpserted, ratingsApplied };
+  // Injuries are a model input, not core data: a feed failure must not fail the sync.
+  let injuriesStored = 0;
+  try {
+    injuriesStored = await syncInjuriesForLeague(league);
+  } catch (err) {
+    console.warn(`[sync] ${league}: injury sync failed`, err);
+  }
+
+  return { league, teamsUpserted: teamIdByExternal.size, gamesUpserted, ratingsApplied, injuriesStored };
 }
 
 export interface KalshiSyncSummary {

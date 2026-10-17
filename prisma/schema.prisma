@@ -269,6 +269,26 @@ model ModelFeatureLog {
   @@index([league])
 }
 
+// Current injury report, replaced wholesale for a league on each sync. Only
+// players with a non-zero chance of missing a game are stored; the model reads
+// these to lower a team's effective Elo (see scoring/injuries.ts).
+model InjuryReport {
+  id               String   @id @default(cuid())
+  league           League
+  teamId           String
+  playerExternalId String
+  playerName       String
+  position         String?
+  status           String
+  isStarter        Boolean? // null when no depth chart is available
+  availabilityLoss Float    // chance the player misses the game, 0-1
+  impactElo        Float    // Elo points lost if the player is out
+  reportedAt       DateTime?
+  fetchedAt        DateTime @default(now())
+
+  @@index([league, teamId])
+}
+
 model ModelWeights {
   id          String   @id @default(cuid())
   league      League   @unique
