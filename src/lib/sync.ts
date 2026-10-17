@@ -7,7 +7,7 @@ import { cfbProvider } from "./providers/cfb";
 import { soccerProvider } from "./providers/soccer";
 import type { SportsProvider } from "./providers/types";
 import { fetchOpenMarkets, fetchOpenPropMarkets, isKalshiConfigured } from "./providers/kalshi";
-import { matchMarketByTicker, matchMarketToGame } from "./providers/match";
+import { matchMarketByNames, matchMarketByTicker, matchMarketToGame } from "./providers/match";
 import { parsePropTicker } from "./providers/kalshi-props";
 import { haystackContainsCandidate } from "./providers/text-match";
 import { matchFixtureToGame } from "./providers/fixture-match";
@@ -131,12 +131,27 @@ export async function syncKalshiMarketsForLeague(league: League): Promise<Kalshi
     include: { homeTeam: true, awayTeam: true },
   });
 
+  // Group yes_sub_titles by event (ticker minus the trailing outcome code) so
+  // the name matcher can see both teams even when each title names just one.
+  const subTitlesByEvent = new Map<string, string[]>();
+  for (const m of markets) {
+    const event = m.ticker.replace(/-[^-]+$/, "");
+    const list = subTitlesByEvent.get(event) ?? [];
+    if (m.yes_sub_title) list.push(m.yes_sub_title);
+    subTitlesByEvent.set(event, list);
+  }
+
   let marketsUpserted = 0;
   for (const m of markets) {
     const closeTime = m.close_time ? new Date(m.close_time) : null;
     const matchedGame =
       matchMarketToGame(m.title, closeTime, candidateGames) ??
-      matchMarketByTicker(m.ticker, candidateGames, league);
+      matchMarketByTicker(m.ticker, candidateGames, league) ??
+      matchMarketByNames(
+        subTitlesByEvent.get(m.ticker.replace(/-[^-]+$/, "")) ?? [],
+        closeTime,
+        candidateGames
+      );
     const yesPrice = m.yes_ask ?? m.last_price ?? null;
     const noPrice = m.no_ask ?? (yesPrice != null ? 100 - yesPrice : null);
 

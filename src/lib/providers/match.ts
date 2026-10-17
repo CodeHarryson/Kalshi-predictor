@@ -1,5 +1,6 @@
 import type { Team, Game } from "@/generated/prisma/client";
 import type { League } from "@/generated/prisma/enums";
+import { haystackContainsCandidate } from "./text-match";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 // Kalshi's per-game moneyline markets don't always close at kickoff - some
@@ -103,6 +104,39 @@ export function matchMarketToGame(
       titleMentionsTeam(marketTitle, g.homeTeam) &&
       titleMentionsTeam(marketTitle, g.awayTeam)
   );
+
+  return matches.length === 1 ? matches[0] : null;
+}
+
+/**
+ * Last-resort matcher for when neither the title nor the ticker codes line
+ * up (e.g. ESPN's "BOIS" vs Kalshi's "BSU"). Takes the `yes_sub_title` of
+ * every market in one event - the two team names plus an optional "Tie" -
+ * and finds the single game whose home and away team names contain them.
+ * Ambiguity ("Michigan" vs "Michigan State") resolves to null, not a guess.
+ */
+export function matchMarketByNames(
+  subTitles: string[],
+  closeTime: Date | null,
+  candidateGames: (Game & { homeTeam: Team; awayTeam: Team })[]
+): Game | null {
+  const names = [...new Set(subTitles.filter((s) => s && !/^tie\b/i.test(s)))];
+  if (names.length !== 2) return null;
+
+  const hit = (team: Team, name: string) => haystackContainsCandidate(team.name, name);
+
+  const matches = candidateGames.filter((g) => {
+    if (closeTime) {
+      const delta = closeTime.getTime() - g.startTime.getTime();
+      if (delta < -CLOSE_BEFORE_START_TOLERANCE_MS || delta > CLOSE_AFTER_START_TOLERANCE_MS) {
+        return false;
+      }
+    }
+    return (
+      (hit(g.homeTeam, names[0]) && hit(g.awayTeam, names[1])) ||
+      (hit(g.homeTeam, names[1]) && hit(g.awayTeam, names[0]))
+    );
+  });
 
   return matches.length === 1 ? matches[0] : null;
 }
