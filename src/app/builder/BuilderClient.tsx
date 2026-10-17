@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { AdminTokenBanner } from "@/components/admin-token-banner";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Select,
@@ -67,7 +68,7 @@ export default function BuilderClient({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [submitting, startSubmit] = useTransition();
-  const { token, ready } = useAdminToken();
+  const { token, ready, setToken } = useAdminToken();
 
   const load = useCallback(async (lg: string) => {
     setLoading(true);
@@ -87,9 +88,11 @@ export default function BuilderClient({
   }, [token]);
 
   useEffect(() => {
-    if (!ready) return;
+    // Without a token every request is "Unauthorized"; the banner below
+    // prompts for it, and saving it re-runs this effect.
+    if (!ready || !token) return;
     load(league);
-  }, [league, load, ready]);
+  }, [league, load, ready, token]);
 
   function toggle(id: string) {
     setSelected((prev) => {
@@ -134,6 +137,7 @@ export default function BuilderClient({
 
   return (
     <div className="flex flex-col gap-6">
+      <AdminTokenBanner token={token} ready={ready} onSave={setToken} />
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Parlay builder</h1>

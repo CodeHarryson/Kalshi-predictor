@@ -259,17 +259,32 @@ const SERIES_PREFIX: Record<League, string[]> = {
   WORLD_CUP: ["KXWCGAME"],
 };
 
-export async function fetchOpenMarkets(league: League): Promise<KalshiMarketDto[]> {
-  const prefixes = SERIES_PREFIX[league];
-  const all: KalshiMarketDto[] = [];
+// Kalshi caps /markets at 200 per page and returns a `cursor` for the next
+// one; a big series (KXNCAAFGAME has 500+ open markets) is silently truncated
+// if only the first page is read.
+const MAX_MARKET_PAGES = 20;
 
-  for (const prefix of prefixes) {
-    const data = await kalshiFetch<{ markets: KalshiRawMarket[] }>(
-      `/markets?status=open&series_ticker=${prefix}&limit=200`
+async function fetchAllOpenRaw(seriesTicker: string): Promise<KalshiRawMarket[]> {
+  const out: KalshiRawMarket[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < MAX_MARKET_PAGES; page++) {
+    const data = await kalshiFetch<{ markets: KalshiRawMarket[]; cursor?: string }>(
+      `/markets?status=open&series_ticker=${seriesTicker}&limit=200` +
+        (cursor ? `&cursor=${encodeURIComponent(cursor)}` : "")
     );
-    if (data?.markets) all.push(...data.markets.map(normalizeMarket));
+    if (!data?.markets?.length) break;
+    out.push(...data.markets);
+    cursor = data.cursor || undefined;
+    if (!cursor) break;
   }
+  return out;
+}
 
+export async function fetchOpenMarkets(league: League): Promise<KalshiMarketDto[]> {
+  const all: KalshiMarketDto[] = [];
+  for (const prefix of SERIES_PREFIX[league]) {
+    all.push(...(await fetchAllOpenRaw(prefix)).map(normalizeMarket));
+  }
   return all;
 }
 
@@ -285,13 +300,8 @@ export async function fetchOpenPropMarkets(
 
   const results: { seriesTicker: string; market: KalshiMarketDto }[] = [];
   for (const seriesTicker of Object.keys(PROP_SERIES)) {
-    const data = await kalshiFetch<{ markets: KalshiRawMarket[] }>(
-      `/markets?status=open&series_ticker=${seriesTicker}&limit=200`
-    );
-    if (data?.markets) {
-      for (const raw of data.markets) {
-        results.push({ seriesTicker, market: normalizeMarket(raw) });
-      }
+    for (const raw of await fetchAllOpenRaw(seriesTicker)) {
+      results.push({ seriesTicker, market: normalizeMarket(raw) });
     }
   }
   return results;
