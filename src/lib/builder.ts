@@ -2,6 +2,7 @@ import { db } from "@/lib/db";
 import type { League, LegKind } from "@/generated/prisma/enums";
 import { scoreGameSideProbability } from "@/lib/scoring/leg-scorer";
 import { resolveMarketFavoredSide } from "@/lib/scoring/composite";
+import { ELO_CONFIG } from "@/lib/scoring/elo";
 import { scorePropMarket, scorePlayerAnytimeGoal } from "@/lib/scoring/prop-scorer";
 import {
   impliedProbabilityFromPriceCents,
@@ -49,6 +50,7 @@ export async function buildParlaySuggestions(
   });
 
   const candidates: CandidateLeg[] = [];
+  const outcomeIndex = new Map<string, number>(); // two-way game id -> index of its kept pick
 
   for (const game of games) {
     for (const market of game.markets) {
@@ -165,7 +167,7 @@ export async function buildParlaySuggestions(
             ? "No draw"
             : `${outcomeLabel} NOT to win`;
 
-      candidates.push({
+      const winnerLeg: CandidateLeg = {
         gameId: game.id,
         kalshiMarketId: market.id,
         description: `${game.awayTeam.name} @ ${game.homeTeam.name} — ${pick}`,
@@ -175,7 +177,23 @@ export async function buildParlaySuggestions(
         marketImpliedProbability,
         edge,
         features,
-      });
+      };
+
+      // In a two-outcome league, Kalshi lists one market per team, so "Jacksonville
+      // to win" and "Houston NOT to win" are the same bet, and "Jacksonville to
+      // win" vs "Houston to win" can never both happen. Either way the game has
+      // exactly one winner, so keep only the best-edge pick per game: otherwise
+      // the list is padded with duplicates, and ticking two of them in the
+      // builder multiplies one event's probability into a parlay.
+      if (!ELO_CONFIG[league].hasDraws && favoredSide !== "draw") {
+        const existing = outcomeIndex.get(game.id);
+        if (existing !== undefined) {
+          if (winnerLeg.edge > candidates[existing].edge) candidates[existing] = winnerLeg;
+          continue;
+        }
+        outcomeIndex.set(game.id, candidates.length);
+      }
+      candidates.push(winnerLeg);
     }
   }
 
