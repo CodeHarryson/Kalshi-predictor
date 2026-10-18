@@ -1,6 +1,8 @@
 import { db } from "@/lib/db";
 import type { League } from "@/generated/prisma/enums";
 import { buildParlaySuggestions, type CandidateLeg } from "./builder";
+import { buildPlayerPropLegs } from "./player-props/legs";
+import { PLAYER_PROP_KINDS, PLAYER_PROP_LEAGUES } from "./player-props/stats";
 
 /**
  * How far to trust the model against the market when ranking. Comparing the
@@ -25,6 +27,18 @@ export const BEST_PARLAY_LEAGUES: League[] = ["NBA", "NFL", "CFB"];
 const PER_LEAGUE_POOL = 25;
 const SLATE_POOL = 24;
 const COMBO_SIZES = [2, 3];
+
+/**
+ * Player-stat legs come from a recent-form baseline with no opponent, minutes
+ * or role input, so they are pulled further toward the market than team picks.
+ * Not measured against outcomes the way MODEL_TRUST was.
+ */
+export const PROP_MODEL_TRUST = 0.25;
+const PROP_LEGS_PER_GAME = 4;
+export type LegSource = "teams" | "players";
+
+/** Leg counts the dashboard offers; "auto" lets each mode choose its own range. */
+export const LEG_COUNT_OPTIONS = [2, 3, 4, 5] as const;
 
 export type RiskMode = "balanced" | "aggressive";
 
@@ -103,9 +117,34 @@ export function scoreLegs(legs: ScoredLeg[]): BestParlay {
   };
 }
 
-function scoreLeg(leg: CandidateLeg): ScoredLeg {
-  const shrunkProbability = shrinkToMarket(leg.predictedProbability, leg.marketImpliedProbability);
+function scoreLeg(leg: CandidateLeg, trust = MODEL_TRUST): ScoredLeg {
+  const shrunkProbability = shrinkToMarket(leg.predictedProbability, leg.marketImpliedProbability, trust);
   return { ...leg, shrunkProbability, shrunkEdge: shrunkProbability - leg.marketImpliedProbability };
+}
+
+/** Keeps each game's `n` best legs by edge, so one player's threshold ladder can't fill the pool. */
+export function capPerGame(legs: CandidateLeg[], n: number): CandidateLeg[] {
+  const seen = new Map<string | null, number>();
+  return [...legs]
+    .sort((a, b) => b.edge - a.edge)
+    .filter((l) => {
+      const count = (seen.get(l.gameId) ?? 0) + 1;
+      seen.set(l.gameId, count);
+      return count <= n;
+    });
+}
+
+/**
+ * Upcoming player-stat legs for `league` with probabilities already pulled
+ * toward the market (PROP_MODEL_TRUST), a few per game, for lists that rank on
+ * the numbers they display.
+ */
+export async function buildShrunkPlayerLegs(league: League): Promise<CandidateLeg[]> {
+  const legs = await buildPlayerPropLegs(league, { limit: 300 });
+  return capPerGame(legs, PROP_LEGS_PER_GAME).map((l) => {
+    const p = shrinkToMarket(l.predictedProbability, l.marketImpliedProbability, PROP_MODEL_TRUST);
+    return { ...l, predictedProbability: p, edge: p - l.marketImpliedProbability };
+  });
 }
 
 /** Every combo of `size` legs from `pool`, never two legs from the same game. */
@@ -130,16 +169,16 @@ export function enumerateDistinctGameCombos<T extends { gameId: string | null }>
 }
 
 /** Pure ranking step, split out so it can be tested without a database. */
-export function rankBestParlays(candidates: CandidateLeg[], alternatives = 2): { best: BestParlay | null; alternatives: BestParlay[] } {
+export function rankBestParlays(candidates: CandidateLeg[], alternatives = 2, trust = MODEL_TRUST, sizes = COMBO_SIZES): { best: BestParlay | null; alternatives: BestParlay[] } {
   const pool = candidates
-    .map(scoreLeg)
+    .map((l) => scoreLeg(l, trust))
     // Only legs that still have an edge after shrinking can help a parlay.
     .filter((l) => l.shrunkEdge > 0 && l.gameId !== null)
     .sort((a, b) => b.shrunkEdge - a.shrunkEdge)
     .slice(0, SLATE_POOL);
 
   const scored: BestParlay[] = [];
-  for (const size of COMBO_SIZES) {
+  for (const size of sizes) {
     for (const legs of enumerateDistinctGameCombos(pool, size)) {
       const parlay = scoreLegs(legs);
       if (parlay.growth > 0) scored.push(parlay);
@@ -150,15 +189,15 @@ export function rankBestParlays(candidates: CandidateLeg[], alternatives = 2): {
 }
 
 /** Pure ranking step for aggressive mode: long-shot legs, ranked by expected return. */
-export function rankAggressiveParlays(candidates: CandidateLeg[], alternatives = 2): { best: BestParlay | null; alternatives: BestParlay[] } {
+export function rankAggressiveParlays(candidates: CandidateLeg[], alternatives = 2, trust = MODEL_TRUST, sizes = AGGRESSIVE_COMBO_SIZES): { best: BestParlay | null; alternatives: BestParlay[] } {
   const pool = candidates
-    .map(scoreLeg)
+    .map((l) => scoreLeg(l, trust))
     .filter((l) => l.shrunkEdge > 0 && l.gameId !== null && l.marketImpliedProbability < AGGRESSIVE_MAX_LEG_MARKET)
     .sort((a, b) => b.shrunkEdge / b.marketImpliedProbability - a.shrunkEdge / a.marketImpliedProbability)
     .slice(0, AGGRESSIVE_SLATE_POOL);
 
   const scored: BestParlay[] = [];
-  for (const size of AGGRESSIVE_COMBO_SIZES) {
+  for (const size of sizes) {
     for (const legs of enumerateDistinctGameCombos(pool, size)) {
       const parlay = scoreLegs(legs);
       if (parlay.edge > 0 && parlay.shrunkProbability >= AGGRESSIVE_MIN_WIN_CHANCE) scored.push(parlay);
@@ -179,20 +218,31 @@ export async function buildBestParlayForWindow(
   window: { from: Date; to: Date },
   alternatives = 2,
   leagues: League[] = BEST_PARLAY_LEAGUES,
-  risk: RiskMode = "balanced"
+  risk: RiskMode = "balanced",
+  source: LegSource = "teams",
+  legCount?: number
 ): Promise<BestParlayResult> {
   const aggressive = risk === "aggressive";
+  const players = source === "players";
+  if (players) leagues = leagues.filter((l) => PLAYER_PROP_LEAGUES.includes(l));
   const now = new Date();
   const from = window.from > now ? window.from : now;
 
   const [pools, gamesInWindow, inProgress] = await Promise.all([
     Promise.all(
       leagues.map((league) =>
-        buildParlaySuggestions(league, { limit: aggressive ? AGGRESSIVE_PER_LEAGUE_POOL : PER_LEAGUE_POOL, from, to: window.to })
+        players
+          ? buildPlayerPropLegs(league, { from, to: window.to, limit: 300 })
+          : buildParlaySuggestions(league, { limit: aggressive ? AGGRESSIVE_PER_LEAGUE_POOL : PER_LEAGUE_POOL, from, to: window.to })
       )
     ),
     db.game.count({
-      where: { league: { in: leagues }, status: "SCHEDULED", startTime: { gte: from, lt: window.to }, markets: { some: {} } },
+      where: {
+        league: { in: leagues },
+        status: "SCHEDULED",
+        startTime: { gte: from, lt: window.to },
+        markets: { some: players ? { propKind: { in: PLAYER_PROP_KINDS } } : {} },
+      },
     }),
     db.game.count({
       where: {
@@ -204,7 +254,10 @@ export async function buildBestParlayForWindow(
     }),
   ]);
 
-  const ranked = aggressive ? rankAggressiveParlays(pools.flat(), alternatives) : rankBestParlays(pools.flat(), alternatives);
+  const trust = players ? PROP_MODEL_TRUST : MODEL_TRUST;
+  const legs = players ? capPerGame(pools.flat(), PROP_LEGS_PER_GAME) : pools.flat();
+  const ranked = aggressive ? rankAggressiveParlays(legs, alternatives, trust, legCount ? [legCount] : undefined)
+    : rankBestParlays(legs, alternatives, trust, legCount ? [legCount] : undefined);
   return { ...ranked, gamesInWindow, inProgress };
 }
 

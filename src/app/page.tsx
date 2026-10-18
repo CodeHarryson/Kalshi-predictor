@@ -8,6 +8,8 @@ import { recommendStakeCents } from "@/lib/scoring/parlay";
 import { AdminTokenGate } from "@/components/admin-token-gate";
 import { BuildComboButton } from "@/components/build-combo-button";
 import { BestParlaySection } from "./best-parlay-section";
+import { buildShrunkPlayerLegs, LEG_COUNT_OPTIONS, type LegSource } from "@/lib/best-parlay";
+import { PLAYER_PROP_LEAGUES } from "@/lib/player-props/stats";
 import { StatusBadge } from "@/components/status-badge";
 import {
   Card,
@@ -119,17 +121,22 @@ function CombosFallback() {
 // Scoring every upcoming game takes seconds, and the inputs only change when a
 // sync runs, so reuse a recent result instead of recomputing on every visit.
 const COMBOS_TTL_MS = 60_000;
-let combosCache: { at: number; value: Awaited<ReturnType<typeof buildRecommendedCombos>> } | null = null;
+const combosCache = new Map<string, { at: number; value: Awaited<ReturnType<typeof buildRecommendedCombos>> }>();
 
-async function getRecommendedCombos() {
-  if (combosCache && Date.now() - combosCache.at < COMBOS_TTL_MS) return combosCache.value;
-  const value = await buildRecommendedCombos(ALL_LEAGUES, { limit: 6 });
-  combosCache = { at: Date.now(), value };
+async function getRecommendedCombos(source: LegSource, legs?: number) {
+  const cacheKey = `${source}-${legs ?? "auto"}`;
+  const cached = combosCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < COMBOS_TTL_MS) return cached.value;
+  const value =
+    source === "players"
+      ? await buildRecommendedCombos(PLAYER_PROP_LEAGUES, { limit: 6, legSource: buildShrunkPlayerLegs, comboSizes: legs ? [legs] : undefined })
+      : await buildRecommendedCombos(ALL_LEAGUES, { limit: 6, comboSizes: legs ? [legs] : undefined });
+  combosCache.set(cacheKey, { at: Date.now(), value });
   return value;
 }
 
-async function CombosSection() {
-  const [combos, balance] = await Promise.all([getRecommendedCombos(), getBalance()]);
+async function CombosSection({ source, legs }: { source: LegSource; legs?: number }) {
+  const [combos, balance] = await Promise.all([getRecommendedCombos(source, legs), getBalance()]);
   return (
       <section className="flex flex-col gap-4">
         <div className="flex items-center justify-between">
@@ -252,9 +259,13 @@ async function CombosSection() {
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ risk?: string }>;
+  searchParams: Promise<{ risk?: string; kind?: string; legs?: string }>;
 }) {
-  const risk = (await searchParams).risk === "aggressive" ? "aggressive" : "balanced";
+  const params = await searchParams;
+  const risk = params.risk === "aggressive" ? "aggressive" : "balanced";
+  const legsParam = Number(params.legs);
+  const legCount = (LEG_COUNT_OPTIONS as readonly number[]).includes(legsParam) ? legsParam : undefined;
+  const source = params.kind === "players" ? "players" : "teams";
   const [byLeague, recentParlays] = await Promise.all([
     upcomingByLeague(),
     db.parlay.findMany({
@@ -283,8 +294,8 @@ export default async function DashboardPage({
         </div>
       </div>
 
-      <Suspense key={risk} fallback={<BestParlayFallback />}>
-        <BestParlaySection risk={risk} />
+      <Suspense key={`${risk}-${source}-${legCount ?? "auto"}`} fallback={<BestParlayFallback />}>
+        <BestParlaySection risk={risk} source={source} legs={legCount} />
       </Suspense>
 
       <section className="flex flex-col gap-4">
@@ -338,8 +349,8 @@ export default async function DashboardPage({
         )}
       </section>
 
-      <Suspense fallback={<CombosFallback />}>
-        <CombosSection />
+      <Suspense key={`${source}-${legCount ?? "auto"}`} fallback={<CombosFallback />}>
+        <CombosSection source={source} legs={legCount} />
       </Suspense>
 
       <section className="flex flex-col gap-4">

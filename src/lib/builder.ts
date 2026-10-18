@@ -286,6 +286,8 @@ interface BuildRecommendedCombosOptions {
   perLeague?: number;
   comboSizes?: number[];
   limit?: number;
+  /** Where each league's candidate legs come from; defaults to the team-pick scorer. */
+  legSource?: (league: League) => Promise<CandidateLeg[]>;
 }
 
 /**
@@ -317,7 +319,7 @@ export async function buildRecommendedCombos(
   // than we'll need so the cross-league search has room to find good
   // pairings without always picking from the same top-5.
   const pools = await Promise.all(
-    leagues.map((l) => buildParlaySuggestions(l, { limit: perLeague }))
+    leagues.map((l) => (opts?.legSource ? opts.legSource(l) : buildParlaySuggestions(l, { limit: perLeague })))
   );
   const all: CandidateLeg[] = pools.flat();
 
@@ -338,7 +340,9 @@ export async function buildRecommendedCombos(
 
   // Cap the search space so we don't blow up combinatorially. 3-leg
   // combos of 60 is ~34k — fine for an in-process build.
-  const trimmed = candidates.slice(0, Math.min(candidates.length, 60));
+  // Bigger combos grow fast (60 choose 5 is 5M), so search a smaller pool.
+  const poolCap = Math.max(...comboSizes) > 3 ? 30 : 60;
+  const trimmed = candidates.slice(0, Math.min(candidates.length, poolCap));
 
   // Resolve gameId -> league once so we can tag each combo with the
   // distinct leagues it touches. Single batched query covers every

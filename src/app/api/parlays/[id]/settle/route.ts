@@ -4,6 +4,7 @@ import { requireAdmin } from "@/lib/admin-auth";
 import { rateLimitResponse } from "@/lib/rate-limit";
 import { resolveMarketFavoredSide } from "@/lib/scoring/composite";
 import { maybeRetrainLeague } from "@/lib/scoring/retrain";
+import { settlePlayerPropLeg } from "@/lib/player-props/settle";
 import type { League, LegKind, LegOutcome, ParlayStatus } from "@/generated/prisma/enums";
 
 interface SettledLeg {
@@ -214,6 +215,28 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         featureLogId: leg.featureLog?.id ?? null,
         league: game.league,
       });
+      continue;
+    }
+
+    // Player stat lines (NBA / NFL): graded from the player's game log.
+    if (leg.legKind === "PLAYER_PROP") {
+      const market = leg.kalshiMarket;
+      const outcome =
+        market?.propKind && market.propThreshold != null && market.propSubjectExternalId
+          ? await settlePlayerPropLeg({
+              side: leg.side,
+              league: game.league,
+              propKind: market.propKind,
+              threshold: market.propThreshold,
+              playerId: market.propSubjectExternalId,
+              gameStart: game.startTime,
+            })
+          : null;
+      if (outcome === null) {
+        leftPending.push(leg.id);
+        continue;
+      }
+      settled.push({ legId: leg.id, outcome, featureLogId: leg.featureLog?.id ?? null, league: game.league });
       continue;
     }
 

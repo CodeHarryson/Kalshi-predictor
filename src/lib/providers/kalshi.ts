@@ -308,6 +308,19 @@ export async function fetchOpenPropMarkets(
   return results;
 }
 
+/** Open markets for arbitrary series tickers (player props), tagged with their series. */
+export async function fetchOpenSeriesMarkets(
+  seriesTickers: string[]
+): Promise<{ seriesTicker: string; market: KalshiMarketDto }[]> {
+  const results: { seriesTicker: string; market: KalshiMarketDto }[] = [];
+  for (const seriesTicker of seriesTickers) {
+    for (const raw of await fetchAllOpenRaw(seriesTicker)) {
+      results.push({ seriesTicker, market: normalizeMarket(raw) });
+    }
+  }
+  return results;
+}
+
 export function isKalshiConfigured(): boolean {
   return hasCredentials();
 }

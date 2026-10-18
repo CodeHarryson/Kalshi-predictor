@@ -1,10 +1,9 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { buildBestParlayForWindow, placeAsPick, type BestParlay, type RiskMode } from "@/lib/best-parlay";
+import { buildBestParlayForWindow, placeAsPick, type BestParlay, type LegSource, type RiskMode, LEG_COUNT_OPTIONS } from "@/lib/best-parlay";
 import { fetchAccountBalance } from "@/lib/providers/kalshi";
 import { recommendStakeCents } from "@/lib/scoring/parlay";
 import { BuildComboButton } from "@/components/build-combo-button";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 const pct = (p: number, digits = 0) => `${(p * 100).toFixed(digits)}%`;
@@ -52,48 +51,96 @@ function legsOf(parlay: BestParlay) {
  * The single best parlay for the rest of today (local time), from games that
  * haven't started. Streams in behind Suspense: scoring is the slow part.
  */
-function RiskToggle({ risk }: { risk: RiskMode }) {
-  const item = (value: RiskMode, label: string, href: string) => (
-    <Link
-      href={href}
-      scroll={false}
-      aria-pressed={risk === value}
-      className={
-        "rounded-md px-3 py-1 text-xs font-medium transition-colors " +
-        (risk === value ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")
-      }
-    >
-      {label}
-    </Link>
-  );
+function dashboardHref(risk: RiskMode, source: LegSource, legs?: number) {
+  const params = new URLSearchParams();
+  if (risk === "aggressive") params.set("risk", "aggressive");
+  if (source === "players") params.set("kind", "players");
+  if (legs) params.set("legs", String(legs));
+  const qs = params.toString();
+  return qs ? `/?${qs}` : "/";
+}
+
+function Segmented<T extends string>({
+  label,
+  value,
+  options,
+}: {
+  label: string;
+  value: T;
+  options: { value: T; label: string; href: string }[];
+}) {
   return (
-    <div className="inline-flex gap-1 rounded-lg border p-0.5" role="group" aria-label="Risk level">
-      {item("balanced", "Balanced", "/")}
-      {item("aggressive", "Aggressive", "/?risk=aggressive")}
+    <div className="inline-flex gap-1 rounded-lg border p-0.5" role="group" aria-label={label}>
+      {options.map((o) => (
+        <Link
+          key={o.value}
+          href={o.href}
+          scroll={false}
+          aria-pressed={value === o.value}
+          className={
+            "rounded-md px-3 py-1 text-xs font-medium transition-colors " +
+            (value === o.value ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")
+          }
+        >
+          {o.label}
+        </Link>
+      ))}
     </div>
   );
 }
 
-export async function BestParlaySection({ risk = "balanced" }: { risk?: RiskMode }) {
+export async function BestParlaySection({
+  risk = "balanced",
+  source = "teams",
+  legs: legCount,
+}: {
+  risk?: RiskMode;
+  source?: LegSource;
+  legs?: number;
+}) {
   const aggressive = risk === "aggressive";
+  const players = source === "players";
   const now = new Date();
   const endOfDay = new Date(now);
   endOfDay.setHours(24, 0, 0, 0);
 
-  const { best, alternatives, gamesInWindow, inProgress } = await buildBestParlayForWindow({ from: now, to: endOfDay }, 2, undefined, risk);
+  const { best, alternatives, gamesInWindow, inProgress } = await buildBestParlayForWindow({ from: now, to: endOfDay }, 2, undefined, risk, source, legCount);
 
   return (
     <section className="flex flex-col gap-4">
       <Card>
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <CardTitle>{aggressive ? "Aggressive parlay for today" : "Best parlay for today"}</CardTitle>
+            <CardTitle>{(aggressive ? "Aggressive " : "Best ") + (players ? "player-prop parlay" : "parlay") + " for today"}</CardTitle>
             <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="outline">NBA · NFL · College football</Badge>
-              <RiskToggle risk={risk} />
+              <Segmented
+                label="Pick type"
+                value={source}
+                options={[
+                  { value: "teams", label: "Team picks", href: dashboardHref(risk, "teams", legCount) },
+                  { value: "players", label: "Player props", href: dashboardHref(risk, "players", legCount) },
+                ]}
+              />
+              <Segmented
+                label="Risk level"
+                value={risk}
+                options={[
+                  { value: "balanced", label: "Balanced", href: dashboardHref("balanced", source, legCount) },
+                  { value: "aggressive", label: "Aggressive", href: dashboardHref("aggressive", source, legCount) },
+                ]}
+              />
+              <Segmented
+                label="Number of legs"
+                value={String(legCount ?? "auto")}
+                options={[
+                  { value: "auto", label: "Auto", href: dashboardHref(risk, source) },
+                  ...LEG_COUNT_OPTIONS.map((n) => ({ value: String(n), label: `${n} legs`, href: dashboardHref(risk, source, n) })),
+                ]}
+              />
             </div>
           </div>
           <CardDescription>
+            {players ? "NBA and NFL stat lines (points, rebounds, yards, touchdowns). " : "NBA, NFL and college football winners. "}
             {aggressive
               ? "Long-shot legs the market underprices, stacked for a big payout. Wins rarely: stake only what you can lose. "
               : ""}
@@ -110,10 +157,10 @@ export async function BestParlaySection({ risk = "balanced" }: { risk?: RiskMode
         <CardContent className="flex flex-col gap-5">
           {!best ? (
             <p className="text-sm text-muted-foreground">
-              {gamesInWindow < (aggressive ? 3 : 2)
-                ? `Fewer than ${aggressive ? "three" : "two"} qualifying games are left today. Try the builder's day filter for tomorrow.`
+              {gamesInWindow < (legCount ?? (aggressive ? 3 : 2))
+                ? `Fewer than ${legCount ?? (aggressive ? 3 : 2)} qualifying games are left today${legCount ? ` for a ${legCount}-leg parlay` : ""}. Try the builder's day filter for tomorrow.`
                 : aggressive
-                  ? "No long-shot combo of three or more games keeps an edge today once the model is pulled toward Kalshi's prices. Switch back to Balanced for the safer pick."
+                  ? `No long-shot combo of ${legCount ?? "three or more"} games keeps an edge and a 3% win chance today once the model is pulled toward Kalshi's prices. Try fewer legs or switch back to Balanced.`
                   : "No parlay has an edge today once the model is pulled toward Kalshi's prices. That is a real answer: skipping beats a forced bet."}
             </p>
           ) : (
@@ -159,9 +206,10 @@ export async function BestParlaySection({ risk = "balanced" }: { risk?: RiskMode
               </div>
 
               <p className="text-xs text-muted-foreground">
-                Raw model win chance {pct(best.modelProbability, 1)}. Compared with Kalshi prices the model gets the
-                direction right but overstates its confidence by about half, so the win chance above splits the
-                difference. The market price multiplies single-game prices; the combo&apos;s actual price on Kalshi can
+                Raw model win chance {pct(best.modelProbability, 1)}.{" "}
+                {players
+                  ? "Player legs come from each player's recent game log only, with no opponent, minutes or role information, so the win chance above keeps just a quarter of the gap to Kalshi's price. Check injury news and lineups before placing. Legs from different games are treated as independent."
+                  : "Compared with Kalshi prices the model gets the direction right but overstates its confidence by about half, so the win chance above splits the difference."} The market price multiplies single-game prices; the combo&apos;s actual price on Kalshi can
                 differ, so check it before placing. This saves the parlay here; you place it on Kalshi yourself.
               </p>
 

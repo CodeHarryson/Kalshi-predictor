@@ -10,6 +10,7 @@ import {
   syncPropMarketsForLeague,
   ALL_LEAGUES,
 } from "@/lib/sync";
+import { syncPlayerPropsForLeague } from "@/lib/player-props/sync";
 import { maybeRetrainLeague, maybeRetrainAllLeagues } from "@/lib/scoring/retrain";
 import { buildParlaySuggestions } from "@/lib/builder";
 import type { CandidateLeg } from "@/lib/builder";
@@ -110,6 +111,7 @@ export async function syncKalshiAction(
     for (const l of leagues) {
       summaries.push(await syncKalshiMarketsForLeague(l));
       await syncPropMarketsForLeague(l);
+      await syncPlayerPropsForLeague(l);
     }
     const totalUpserted = summaries.reduce((n, s) => n + s.marketsUpserted, 0);
     const anyConfigured = summaries.some((s) => s.configured);

@@ -30,7 +30,7 @@ interface Candidate {
   kalshiMarketId: string;
   description: string;
   side: "YES" | "NO";
-  legKind: "GAME_WINNER" | "PLAYER_GOALS" | "TEAM_CORNERS";
+  legKind: "GAME_WINNER" | "PLAYER_GOALS" | "TEAM_CORNERS" | "PLAYER_PROP";
   predictedProbability: number;
   marketImpliedProbability: number | null;
   edge: number;

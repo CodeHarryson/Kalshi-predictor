@@ -4,7 +4,7 @@ import { combineParlayProbability } from "@/lib/scoring/parlay";
 import { requireAdmin } from "@/lib/admin-auth";
 import type { LegKind } from "@/generated/prisma/enums";
 
-const LEG_KINDS: LegKind[] = ["GAME_WINNER", "PLAYER_GOALS", "TEAM_CORNERS"];
+const LEG_KINDS: LegKind[] = ["GAME_WINNER", "PLAYER_GOALS", "TEAM_CORNERS", "PLAYER_PROP"];
 
 interface LegInput {
   // Null for tournament-scoped legs (PLAYER_GOALS) with no single game to
@@ -192,6 +192,10 @@ export async function POST(request: Request) {
           marketImpliedProbability: leg.marketImpliedProbability,
         },
       });
+
+      // Player stat lines don't use the team-rating features that retraining and
+      // calibration read, so they stay out of those logs.
+      if (leg.legKind === "PLAYER_PROP") continue;
 
       await tx.modelFeatureLog.create({
         data: {

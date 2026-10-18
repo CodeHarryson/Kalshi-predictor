@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-auth";
 import { rateLimitResponse } from "@/lib/rate-limit";
+import { syncPlayerPropsForLeague } from "@/lib/player-props/sync";
 import { ALL_LEAGUES, syncKalshiMarketsForLeague } from "@/lib/sync";
 import type { League } from "@/generated/prisma/enums";
 
@@ -35,5 +36,11 @@ export async function POST(req: Request) {
     results.push(await syncKalshiMarketsForLeague(l));
   }
 
-  return NextResponse.json({ results });
+  // Player props hang off the games just linked above.
+  const playerProps = [];
+  for (const l of leagues) {
+    playerProps.push(await syncPlayerPropsForLeague(l));
+  }
+
+  return NextResponse.json({ results, playerProps });
 }

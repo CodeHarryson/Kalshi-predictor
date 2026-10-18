@@ -53,6 +53,7 @@ enum LegKind {
   GAME_WINNER
   PLAYER_GOALS
   TEAM_CORNERS
+  PLAYER_PROP // a player's stat line in one game (points, yards, ...); the stat is the market's propKind
 }
 
 // propKind mirrors LegKind for the market side: a KalshiMarket's propKind
@@ -62,6 +63,16 @@ enum LegKind {
 enum PropKind {
   PLAYER_GOALS
   TEAM_CORNERS
+  // Per-game player stat lines (NBA / NFL), "N+" thresholds.
+  PLAYER_POINTS
+  PLAYER_REBOUNDS
+  PLAYER_ASSISTS
+  PLAYER_THREES
+  PLAYER_PASS_YDS
+  PLAYER_PASS_COMP
+  PLAYER_RUSH_YDS
+  PLAYER_REC_YDS
+  PLAYER_TDS
 }
 
 model Team {
@@ -96,9 +107,28 @@ model Player {
 
   team        Team?    @relation(fields: [teamId], references: [id])
   stats       PlayerGameStat[]
+  logs        PlayerGameLog[]
 
   @@index([league])
   @@index([teamId])
+}
+
+// One player's stat line for one game, from ESPN's per-athlete game log. Kept
+// apart from PlayerGameStat (which hangs off our own Game rows) because logs
+// cover prior seasons whose games we never stored. `stats` is a JSON object
+// keyed by ESPN stat name (points, passingYards, ...).
+model PlayerGameLog {
+  id        String   @id @default(cuid())
+  playerId  String
+  eventId   String   // ESPN event id
+  gameDate  DateTime
+  stats     String
+  updatedAt DateTime @updatedAt
+
+  player    Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@unique([playerId, eventId])
+  @@index([playerId, gameDate])
 }
 
 model Game {

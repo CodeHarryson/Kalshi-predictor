@@ -13,6 +13,7 @@ import { parsePropTicker } from "./providers/kalshi-props";
 import { haystackContainsCandidate } from "./providers/text-match";
 import { matchFixtureToGame } from "./providers/fixture-match";
 import { fetchEspnGameStats } from "./providers/espn-soccer-stats";
+import { syncPlayerPropsForLeague } from "./player-props/sync";
 import { recomputeRatingsForLeague } from "./scoring/rating-engine";
 
 export const ALL_LEAGUES: League[] = ["NBA", "NFL", "CFB", "EPL", "LALIGA", "WORLD_CUP"];
@@ -555,6 +556,7 @@ export async function syncAll(leagues: League[] = ALL_LEAGUES): Promise<FullSync
   const propMarkets: PropMarketSyncSummary[] = [];
   for (const league of leagues) {
     propMarkets.push(await syncPropMarketsForLeague(league));
+    await syncPlayerPropsForLeague(league);
   }
 
   const propStats: PropStatsSyncSummary[] = [];
