@@ -224,7 +224,12 @@ model Parlay {
   notes                 String?
   combinedProbability    Float?
   stake                 Float?
-  source                String       @default("manual") // "suggestion" | "manual"
+  source                String       @default("manual") // "suggestion" | "manual" | "kalshi"
+  // Kalshi market ticker of the bet this parlay mirrors (a combo market like
+  // KXMVECROSSCATEGORY-..., or a single market). Set by the Kalshi import, and
+  // unique so re-importing updates the same row instead of duplicating it.
+  externalId            String?      @unique
+  payout                Float?       // dollars returned once settled (0 for a loss)
 
   legs                  ParlayLeg[]
 }

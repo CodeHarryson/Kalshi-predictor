@@ -6,6 +6,7 @@ import { buildRecommendedCombos } from "@/lib/builder";
 import { fetchAccountBalance } from "@/lib/providers/kalshi";
 import { recommendStakeCents } from "@/lib/scoring/parlay";
 import { AdminTokenGate } from "@/components/admin-token-gate";
+import { BuildComboButton } from "@/components/build-combo-button";
 import { StatusBadge } from "@/components/status-badge";
 import {
   Card,
@@ -212,36 +213,18 @@ async function CombosSection() {
                         {stakeCents === null ? "—" : formatDollars(stakeCents)}
                       </TableCell>
                       <TableCell className="text-right">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          nativeButton={false}
-                          render={
-                            <Link
-                              href={{
-                                pathname: "/builder",
-                                query: {
-                                  combo: encodeURIComponent(
-                                    JSON.stringify(
-                                      combo.legs.map((l) => ({
-                                        gameId: l.gameId,
-                                        kalshiMarketId: l.kalshiMarketId,
-                                        description: l.description,
-                                        side: l.side,
-                                        legKind: l.legKind,
-                                        predictedProbability: l.predictedProbability,
-                                        marketImpliedProbability: l.marketImpliedProbability,
-                                        features: l.features,
-                                      }))
-                                    )
-                                  ),
-                                },
-                              }}
-                            />
-                          }
-                        >
-                          Build
-                        </Button>
+                        <BuildComboButton
+                          legs={combo.legs.map((l) => ({
+                            gameId: l.gameId,
+                            kalshiMarketId: l.kalshiMarketId,
+                            description: l.description,
+                            side: l.side,
+                            legKind: l.legKind,
+                            predictedProbability: l.predictedProbability,
+                            marketImpliedProbability: l.marketImpliedProbability,
+                            features: l.features,
+                          }))}
+                        />
                       </TableCell>
                     </TableRow>
                   );

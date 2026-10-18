@@ -16,6 +16,7 @@ import type { CandidateLeg } from "@/lib/builder";
 import { computeCalibration } from "@/lib/scoring/calibration";
 import type { CalibrationReport } from "@/lib/scoring/calibration";
 import { checkAdminToken } from "@/lib/admin-auth";
+import { importKalshiPortfolio, type KalshiImportSummary } from "@/lib/kalshi-import";
 import { rateLimitAction } from "@/lib/rate-limit";
 import { db } from "@/lib/db";
 
@@ -127,6 +128,37 @@ export async function syncKalshiAction(
     };
   } catch (err) {
     console.error(`[action.syncKalshi] threw after ${Date.now() - start}ms:`, err);
+    return { ok: false, error: toMessage(err) };
+  }
+}
+
+// Pulls the signed-in Kalshi account's bets (combos and singles, with entry
+// price, stake and settled results) into History. Read-only against Kalshi.
+export async function importKalshiBetsAction(
+  token?: string | null
+): Promise<ActionResult<KalshiImportSummary>> {
+  const start = Date.now();
+  try {
+    const t = await resolveToken(token);
+    const denied = checkAdminToken(t);
+    if (!denied.ok) {
+      console.warn(`[action.importKalshiBets] denied: ${denied.error}`);
+      return { ok: false, error: denied.error };
+    }
+
+    const limited = rateLimitAction({ key: "action importKalshiBets", windowMs: 30_000, max: 1 }, t);
+    if (limited) return { ok: false, error: limited.error };
+
+    const summary = await importKalshiPortfolio();
+    console.info(
+      `[action.importKalshiBets] done in ${Date.now() - start}ms — ` +
+        `bets=${summary.bets}, created=${summary.created}, updated=${summary.updated}, adopted=${summary.adopted}`
+    );
+    revalidatePath("/");
+    revalidatePath("/history");
+    return { ok: true, data: summary };
+  } catch (err) {
+    console.error(`[action.importKalshiBets] threw after ${Date.now() - start}ms:`, err);
     return { ok: false, error: toMessage(err) };
   }
 }

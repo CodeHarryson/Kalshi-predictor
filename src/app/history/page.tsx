@@ -53,6 +53,9 @@ export default async function HistoryPage() {
                     createdAt: parlay.createdAt,
                     combinedProbability: parlay.combinedProbability,
                     stake: parlay.stake,
+                    payout: parlay.payout,
+                    source: parlay.source,
+                    notes: parlay.notes,
                     status: parlay.status,
                     legs: parlay.legs.map((leg) => ({
                       id: leg.id,

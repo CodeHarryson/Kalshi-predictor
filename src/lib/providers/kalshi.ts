@@ -180,7 +180,7 @@ function signRequest(method: string, path: string, timestampMs: string): string 
   return signature.toString("base64");
 }
 
-async function kalshiFetch<T>(path: string, opts?: { timeoutMs?: number }): Promise<T | null> {
+export async function kalshiFetch<T>(path: string, opts?: { timeoutMs?: number }): Promise<T | null> {
   if (!hasCredentials()) {
     console.warn("[kalshi provider] KALSHI_KEY_ID and KALSHI_PRIVATE_KEY_PATH not set, skipping fetch");
     return null;
@@ -310,6 +310,58 @@ export async function fetchOpenPropMarkets(
 
 export function isKalshiConfigured(): boolean {
   return hasCredentials();
+}
+
+// --- Portfolio (the signed-in account's own bets). Read-only GETs. ---
+
+const PORTFOLIO_TIMEOUT_MS = 20_000;
+const MAX_PORTFOLIO_PAGES = 50;
+
+/** Follows Kalshi's `cursor` until exhausted; null if the first page fails. */
+async function fetchAllPages<T>(path: string, key: string): Promise<T[] | null> {
+  const out: T[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < MAX_PORTFOLIO_PAGES; page++) {
+    const sep = path.includes("?") ? "&" : "?";
+    const data = await kalshiFetch<Record<string, unknown>>(
+      `${path}${sep}limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+      { timeoutMs: PORTFOLIO_TIMEOUT_MS }
+    );
+    if (!data) return page === 0 ? null : out;
+    const items = data[key];
+    if (Array.isArray(items)) out.push(...(items as T[]));
+    cursor = typeof data.cursor === "string" && data.cursor ? data.cursor : undefined;
+    if (!cursor) break;
+  }
+  return out;
+}
+
+export function fetchPortfolioFills<T>(): Promise<T[] | null> {
+  return fetchAllPages<T>("/portfolio/fills", "fills");
+}
+
+export function fetchPortfolioSettlements<T>(): Promise<T[] | null> {
+  return fetchAllPages<T>("/portfolio/settlements", "settlements");
+}
+
+export interface KalshiMarketDetail {
+  ticker: string;
+  title: string;
+  yes_sub_title?: string;
+  status?: string;
+  result?: string;
+  last_price_dollars?: string;
+  yes_ask_dollars?: string;
+  yes_bid_dollars?: string;
+  mve_selected_legs?: { market_ticker: string; event_ticker: string; side: string }[];
+}
+
+export async function fetchMarketDetail(ticker: string): Promise<KalshiMarketDetail | null> {
+  const data = await kalshiFetch<{ market: KalshiMarketDetail }>(
+    `/markets/${encodeURIComponent(ticker)}`,
+    { timeoutMs: PORTFOLIO_TIMEOUT_MS }
+  );
+  return data?.market ?? null;
 }
 
 // Unlike /markets (dollar-string fields, see KalshiRawMarket above),

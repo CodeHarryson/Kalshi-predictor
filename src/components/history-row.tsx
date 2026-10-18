@@ -6,6 +6,7 @@ import { useAdminToken } from "@/lib/use-admin-token";
 import { markParlayOutcomeAction } from "@/lib/actions";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { TableCell, TableRow } from "@/components/ui/table";
 import type { LegOutcome, MarketSide, ParlayStatus } from "@/generated/prisma/enums";
 
@@ -14,6 +15,9 @@ export interface HistoryRowParlay {
   createdAt: Date;
   combinedProbability: number | null;
   stake: number | null;
+  payout: number | null;
+  source: string;
+  notes: string | null;
   status: ParlayStatus;
   legs: {
     id: string;
@@ -41,7 +45,11 @@ function formatDate(date: Date) {
 export function HistoryRow({ parlay }: HistoryRowProps) {
   const { token, ready } = useAdminToken();
   const [pending, startTransition] = useTransition();
-  const canMark = ready && !!token && parlay.status === "PENDING";
+  // Imported bets are graded by Kalshi itself; manual marking would just
+  // be overwritten by the next import.
+  const fromKalshi = parlay.source === "kalshi";
+  const canMark = ready && !!token && parlay.status === "PENDING" && !fromKalshi;
+  const net = parlay.payout != null && parlay.stake != null ? parlay.payout - parlay.stake : null;
 
   function mark(outcome: "WON" | "LOST") {
     startTransition(async () => {
@@ -56,7 +64,16 @@ export function HistoryRow({ parlay }: HistoryRowProps) {
 
   return (
     <TableRow className="align-top">
-      <TableCell>{formatDate(parlay.createdAt)}</TableCell>
+      <TableCell>
+        {formatDate(parlay.createdAt)}
+        {fromKalshi && (
+          <div className="mt-1">
+            <Badge variant="outline" title={parlay.notes ?? undefined}>
+              Kalshi
+            </Badge>
+          </div>
+        )}
+      </TableCell>
       <TableCell className="max-w-md whitespace-normal">
         <ul className="flex flex-col gap-1">
           {parlay.legs.map((leg) => (
@@ -80,7 +97,19 @@ export function HistoryRow({ parlay }: HistoryRowProps) {
           ? `${(parlay.combinedProbability * 100).toFixed(1)}%`
           : "—"}
       </TableCell>
-      <TableCell>{parlay.stake != null ? `$${parlay.stake}` : "—"}</TableCell>
+      <TableCell>
+        {parlay.stake != null ? `$${parlay.stake.toFixed(2)}` : "—"}
+        {parlay.payout != null && (
+          <div className="text-xs text-muted-foreground">
+            paid out ${parlay.payout.toFixed(2)}
+            {net != null && (
+              <span className={net >= 0 ? " text-green-600 dark:text-green-400" : " text-red-600 dark:text-red-400"}>
+                {" "}({net >= 0 ? "+" : "−"}${Math.abs(net).toFixed(2)})
+              </span>
+            )}
+          </div>
+        )}
+      </TableCell>
       <TableCell className="text-right">
         {canMark ? (
           <div className="flex justify-end gap-1">
