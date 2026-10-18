@@ -27,19 +27,28 @@ export interface CandidateLeg {
   marketImpliedProbability: number;
   edge: number;
   features: Record<string, number>;
+  /** Kickoff, ISO 8601. Null for tournament-scoped legs with no single game. */
+  startTime: string | null;
 }
 
 export async function buildParlaySuggestions(
   league: League,
-  opts?: { limit?: number }
+  opts?: { limit?: number; from?: Date; to?: Date }
 ): Promise<CandidateLeg[]> {
   const limit = opts?.limit ?? 20;
+
+  // Games that have already started are never offered: the model only knows
+  // pre-game information, while the market reprices live, so any "edge"
+  // on an in-progress game would just be the model missing the score.
+  const now = new Date();
+  const earliest = opts?.from && opts.from > now ? opts.from : now;
+  const windowed = opts?.from !== undefined || opts?.to !== undefined;
 
   const games = await db.game.findMany({
     where: {
       league,
       status: "SCHEDULED",
-      startTime: { gte: new Date() },
+      startTime: { gte: earliest, ...(opts?.to ? { lt: opts.to } : {}) },
       markets: { some: {} },
     },
     include: {
@@ -106,6 +115,7 @@ export async function buildParlaySuggestions(
             gamesObserved: propScore.gamesObserved,
             fellBackToPrior: propScore.fellBackToPrior ? 1 : 0,
           },
+          startTime: game.startTime.toISOString(),
         });
         continue;
       }
@@ -183,6 +193,7 @@ export async function buildParlaySuggestions(
         marketImpliedProbability,
         edge,
         features,
+        startTime: game.startTime.toISOString(),
       };
 
       // In a two-outcome league, Kalshi lists one market per team, so "Jacksonville
@@ -208,7 +219,8 @@ export async function buildParlaySuggestions(
   // comment), so they're never reachable via the per-game loop above.
   // Scanned separately here, scoped to `league` the same way the games
   // query is (these rows are only ever synced with league: "WORLD_CUP").
-  const playerGoalMarkets = await db.kalshiMarket.findMany({
+  // Skipped for a day-filtered request: they belong to no particular day.
+  const playerGoalMarkets = windowed ? [] : await db.kalshiMarket.findMany({
     // Sync only upserts markets Kalshi still lists as open and never retires
     // the rest, so a past closeTime is the only signal a market is dead.
     where: {
@@ -253,6 +265,7 @@ export async function buildParlaySuggestions(
         alreadyScored: propScore.alreadyScored ? 1 : 0,
         remainingGames: propScore.remainingGames,
       },
+      startTime: null,
     });
   }
 

@@ -7,6 +7,7 @@ import { fetchAccountBalance } from "@/lib/providers/kalshi";
 import { recommendStakeCents } from "@/lib/scoring/parlay";
 import { AdminTokenGate } from "@/components/admin-token-gate";
 import { BuildComboButton } from "@/components/build-combo-button";
+import { BestParlaySection } from "./best-parlay-section";
 import { StatusBadge } from "@/components/status-badge";
 import {
   Card,
@@ -88,6 +89,17 @@ async function BalanceBadge() {
     <Badge variant="outline">
       Kalshi balance: {balance ? formatDollars(balance.balanceCents) : "unavailable"}
     </Badge>
+  );
+}
+
+function BestParlayFallback() {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Best parlay for today</CardTitle>
+        <CardDescription>Scoring the rest of today&apos;s games…</CardDescription>
+      </CardHeader>
+    </Card>
   );
 }
 
@@ -265,6 +277,10 @@ export default async function DashboardPage() {
           <AdminTokenGate />
         </div>
       </div>
+
+      <Suspense fallback={<BestParlayFallback />}>
+        <BestParlaySection />
+      </Suspense>
 
       <section className="flex flex-col gap-4">
         <div className="flex items-center justify-between">

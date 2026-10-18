@@ -194,9 +194,23 @@ export async function retrainAction(
   }
 }
 
+// A day filter arrives as two ISO timestamps computed in the browser, since
+// "today" depends on the viewer's timezone, not the server's.
+const MAX_RANGE_MS = 8 * 24 * 60 * 60 * 1000;
+
+function parseRange(range?: { from: string; to: string } | null): { from: Date; to: Date } | "invalid" | null {
+  if (!range) return null;
+  const from = new Date(range.from);
+  const to = new Date(range.to);
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return "invalid";
+  if (to <= from || to.getTime() - from.getTime() > MAX_RANGE_MS) return "invalid";
+  return { from, to };
+}
+
 export async function fetchSuggestionsAction(
   league: string,
-  token?: string | null
+  token?: string | null,
+  range?: { from: string; to: string } | null
 ): Promise<ActionResult<{ candidates: CandidateLeg[] }>> {
   try {
     const denied = checkAdminToken(await resolveToken(token));
@@ -205,7 +219,9 @@ export async function fetchSuggestionsAction(
     if (typeof league !== "string" || !ALL_LEAGUES.includes(league as League) || league === "") {
       return { ok: false, error: "Invalid league" };
     }
-    const candidates = await buildParlaySuggestions(league as League);
+    const window = parseRange(range);
+    if (window === "invalid") return { ok: false, error: "Invalid day range" };
+    const candidates = await buildParlaySuggestions(league as League, window ?? undefined);
     return { ok: true, data: { candidates } };
   } catch (err) {
     return { ok: false, error: toMessage(err) };

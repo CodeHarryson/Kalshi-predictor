@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -35,6 +35,35 @@ interface Candidate {
   marketImpliedProbability: number | null;
   edge: number;
   features: unknown;
+  startTime?: string | null;
+}
+
+// A day filter is "all" or a number of days from today (0 = today). Windows are
+// built in the browser's local time: "today" is the viewer's day, not the server's.
+const DAY_COUNT = 7;
+
+function dayWindow(offset: number): { from: string; to: string } {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() + offset);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  // Today starts "now": games already underway are never offered.
+  const from = offset === 0 ? new Date() : start;
+  return { from: from.toISOString(), to: end.toISOString() };
+}
+
+function dayLabel(offset: number): string {
+  if (offset === 0) return "Today";
+  if (offset === 1) return "Tomorrow";
+  const d = new Date();
+  d.setDate(d.getDate() + offset);
+  return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+}
+
+function formatStart(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
 interface BuilderClientProps {
@@ -64,17 +93,29 @@ export default function BuilderClient({
   initialLeague,
 }: BuilderClientProps) {
   const [league, setLeague] = useState(initialLeague);
+  const [day, setDay] = useState<string>("all");
+  const dayOptions = useMemo(
+    () => [
+      { value: "all", label: "All days" },
+      ...Array.from({ length: DAY_COUNT }, (_, i) => ({ value: String(i), label: dayLabel(i) })),
+    ],
+    []
+  );
   const [candidates, setCandidates] = useState<Candidate[]>(initialCandidates);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [submitting, startSubmit] = useTransition();
   const { token, ready, setToken } = useAdminToken();
 
-  const load = useCallback(async (lg: string) => {
+  const load = useCallback(async (lg: string, dayValue: string) => {
     setLoading(true);
     setSelected(new Set());
     try {
-      const result = await fetchSuggestionsAction(lg, token);
+      const result = await fetchSuggestionsAction(
+        lg,
+        token,
+        dayValue === "all" ? null : dayWindow(Number(dayValue))
+      );
       if (!result.ok) throw new Error(result.error ?? "Request failed");
       setCandidates(result.data?.candidates ?? []);
     } catch (err) {
@@ -91,8 +132,8 @@ export default function BuilderClient({
     // Without a token every request is "Unauthorized"; the banner below
     // prompts for it, and saving it re-runs this effect.
     if (!ready || !token) return;
-    load(league);
-  }, [league, load, ready, token]);
+    load(league, day);
+  }, [league, day, load, ready, token]);
 
   function toggle(id: string) {
     setSelected((prev) => {
@@ -126,7 +167,7 @@ export default function BuilderClient({
           description: `${selectedLegs.length} legs saved.`,
         });
         setSelected(new Set());
-        load(league);
+        load(league, day);
       } catch (err) {
         toast.error("Could not build parlay", {
           description: err instanceof Error ? err.message : undefined,
@@ -145,20 +186,36 @@ export default function BuilderClient({
             Model-suggested +EV legs. Select the ones you want and build a parlay.
           </p>
         </div>
-        <Select value={league} onValueChange={(v) => setLeague(v as string)}>
-          <SelectTrigger className="w-44">
-            <SelectValue>
-              {(value) => LEAGUES.find((l) => l.value === value)?.label ?? value}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            {LEAGUES.map((l) => (
-              <SelectItem key={l.value} value={l.value}>
-                {l.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="flex flex-wrap gap-2">
+          <Select value={league} onValueChange={(v) => setLeague(v as string)}>
+            <SelectTrigger className="w-44">
+              <SelectValue>
+                {(value) => LEAGUES.find((l) => l.value === value)?.label ?? value}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {LEAGUES.map((l) => (
+                <SelectItem key={l.value} value={l.value}>
+                  {l.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={day} onValueChange={(v) => setDay(v as string)}>
+            <SelectTrigger className="w-44" aria-label="Filter by day">
+              <SelectValue>
+                {(value) => dayOptions.find((d) => d.value === value)?.label ?? value}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {dayOptions.map((d) => (
+                <SelectItem key={d.value} value={d.value}>
+                  {d.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       <Card>
@@ -170,7 +227,9 @@ export default function BuilderClient({
           </CardContent>
         ) : candidates.length === 0 ? (
           <CardContent className="py-8 text-center text-sm text-muted-foreground">
-            No candidate legs for this league. Sync games and Kalshi markets first.
+            {day === "all"
+              ? "No candidate legs for this league. Sync games and Kalshi markets first."
+              : "No candidate legs for this league on that day. Games already underway aren't offered; try another day."}
           </CardContent>
         ) : (
           <Table>
@@ -178,6 +237,7 @@ export default function BuilderClient({
               <TableRow>
                 <TableHead className="w-8" />
                 <TableHead>Market</TableHead>
+                <TableHead>Starts</TableHead>
                 <TableHead>Side</TableHead>
                 <TableHead className="text-right">Model</TableHead>
                 <TableHead className="text-right">Market</TableHead>
@@ -202,6 +262,9 @@ export default function BuilderClient({
                     />
                   </TableCell>
                   <TableCell className="max-w-xs truncate">{c.description}</TableCell>
+                  <TableCell className="whitespace-nowrap text-muted-foreground" suppressHydrationWarning>
+                    {formatStart(c.startTime)}
+                  </TableCell>
                   <TableCell>
                     <Badge variant="outline">{c.side}</Badge>
                   </TableCell>
