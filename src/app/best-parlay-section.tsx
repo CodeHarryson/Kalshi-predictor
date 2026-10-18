@@ -1,5 +1,6 @@
 import { Suspense } from "react";
-import { buildBestParlayForWindow, placeAsPick, type BestParlay } from "@/lib/best-parlay";
+import Link from "next/link";
+import { buildBestParlayForWindow, placeAsPick, type BestParlay, type RiskMode } from "@/lib/best-parlay";
 import { fetchAccountBalance } from "@/lib/providers/kalshi";
 import { recommendStakeCents } from "@/lib/scoring/parlay";
 import { BuildComboButton } from "@/components/build-combo-button";
@@ -51,22 +52,51 @@ function legsOf(parlay: BestParlay) {
  * The single best parlay for the rest of today (local time), from games that
  * haven't started. Streams in behind Suspense: scoring is the slow part.
  */
-export async function BestParlaySection() {
+function RiskToggle({ risk }: { risk: RiskMode }) {
+  const item = (value: RiskMode, label: string, href: string) => (
+    <Link
+      href={href}
+      scroll={false}
+      aria-pressed={risk === value}
+      className={
+        "rounded-md px-3 py-1 text-xs font-medium transition-colors " +
+        (risk === value ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")
+      }
+    >
+      {label}
+    </Link>
+  );
+  return (
+    <div className="inline-flex gap-1 rounded-lg border p-0.5" role="group" aria-label="Risk level">
+      {item("balanced", "Balanced", "/")}
+      {item("aggressive", "Aggressive", "/?risk=aggressive")}
+    </div>
+  );
+}
+
+export async function BestParlaySection({ risk = "balanced" }: { risk?: RiskMode }) {
+  const aggressive = risk === "aggressive";
   const now = new Date();
   const endOfDay = new Date(now);
   endOfDay.setHours(24, 0, 0, 0);
 
-  const { best, alternatives, gamesInWindow, inProgress } = await buildBestParlayForWindow({ from: now, to: endOfDay });
+  const { best, alternatives, gamesInWindow, inProgress } = await buildBestParlayForWindow({ from: now, to: endOfDay }, 2, undefined, risk);
 
   return (
     <section className="flex flex-col gap-4">
       <Card>
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <CardTitle>Best parlay for today</CardTitle>
-            <Badge variant="outline">NBA · NFL · College football</Badge>
+            <CardTitle>{aggressive ? "Aggressive parlay for today" : "Best parlay for today"}</CardTitle>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="outline">NBA · NFL · College football</Badge>
+              <RiskToggle risk={risk} />
+            </div>
           </div>
           <CardDescription>
+            {aggressive
+              ? "Long-shot legs the market underprices, stacked for a big payout. Wins rarely: stake only what you can lose. "
+              : ""}
             Picked from {gamesInWindow} game{gamesInWindow === 1 ? "" : "s"} still to start today.
             {inProgress > 0 && (
               <>
@@ -80,9 +110,11 @@ export async function BestParlaySection() {
         <CardContent className="flex flex-col gap-5">
           {!best ? (
             <p className="text-sm text-muted-foreground">
-              {gamesInWindow < 2
-                ? "Fewer than two qualifying games are left today. Try the builder's day filter for tomorrow."
-                : "No parlay has an edge today once the model is pulled toward Kalshi's prices. That is a real answer: skipping beats a forced bet."}
+              {gamesInWindow < (aggressive ? 3 : 2)
+                ? `Fewer than ${aggressive ? "three" : "two"} qualifying games are left today. Try the builder's day filter for tomorrow.`
+                : aggressive
+                  ? "No long-shot combo of three or more games keeps an edge today once the model is pulled toward Kalshi's prices. Switch back to Balanced for the safer pick."
+                  : "No parlay has an edge today once the model is pulled toward Kalshi's prices. That is a real answer: skipping beats a forced bet."}
             </p>
           ) : (
             <>
@@ -114,6 +146,9 @@ export async function BestParlaySection() {
                     value={pct(best.shrunkProbability, 1)}
                     hint="Model probability pulled halfway toward the market price. The raw model says more (see below)."
                   />
+                  {aggressive && (
+                    <Stat label="Payout" value={`${(1 / best.marketImplied).toFixed(1)}x`} hint="Return per $1 staked at the estimated market price, if every leg wins." />
+                  )}
                   <Stat label="Market price" value={pct(best.marketImplied, 1)} hint="Product of the legs Kalshi prices: an estimate of what the combo costs." />
                   <Stat label="Expected return" value={`${best.expectedReturn >= 0 ? "+" : ""}${(best.expectedReturn * 100).toFixed(0)}%`} hint="Expected profit per $1 staked at the market price." />
                   <Suspense fallback={<Stat label="Suggested stake" value="…" />}>

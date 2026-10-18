@@ -249,7 +249,12 @@ async function CombosSection() {
   );
 }
 
-export default async function DashboardPage() {
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ risk?: string }>;
+}) {
+  const risk = (await searchParams).risk === "aggressive" ? "aggressive" : "balanced";
   const [byLeague, recentParlays] = await Promise.all([
     upcomingByLeague(),
     db.parlay.findMany({
@@ -278,8 +283,8 @@ export default async function DashboardPage() {
         </div>
       </div>
 
-      <Suspense fallback={<BestParlayFallback />}>
-        <BestParlaySection />
+      <Suspense key={risk} fallback={<BestParlayFallback />}>
+        <BestParlaySection risk={risk} />
       </Suspense>
 
       <section className="flex flex-col gap-4">

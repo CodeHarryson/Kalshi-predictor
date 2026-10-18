@@ -4,6 +4,7 @@ import {
   enumerateDistinctGameCombos,
   growthRate,
   MODEL_TRUST,
+  rankAggressiveParlays,
   rankBestParlays,
   shrinkToMarket,
 } from "./best-parlay";
@@ -103,5 +104,28 @@ describe("placeAsPick", () => {
     expect(placeAsPick("Dallas Cowboys @ Green Bay Packers — Green Bay Packers to win")).toBeNull();
     expect(placeAsPick("Real Madrid CF — No draw")).toBeNull();
     expect(placeAsPick("A @ B — C NOT to win")).toBeNull();
+  });
+});
+
+describe("rankAggressiveParlays", () => {
+  it("only uses underdog legs, in combos of 3+ distinct games", () => {
+    const out = rankAggressiveParlays([
+      leg("fav", "g1", 0.9, 0.8), // favorite: excluded
+      leg("d1", "g2", 0.5, 0.35),
+      leg("d2", "g3", 0.45, 0.3),
+      leg("d3", "g4", 0.4, 0.28),
+      leg("d4", "g5", 0.42, 0.3),
+    ]);
+    expect(out.best).not.toBeNull();
+    const ids = out.best!.legs.map((l) => l.kalshiMarketId);
+    expect(ids).not.toContain("fav");
+    expect(ids.length).toBeGreaterThanOrEqual(3);
+    expect(out.best!.expectedReturn).toBeGreaterThan(0);
+  });
+
+  it("returns nothing when the win chance is below the floor or fewer than 3 games", () => {
+    expect(rankAggressiveParlays([leg("a", "g1", 0.5, 0.35), leg("b", "g2", 0.5, 0.35)]).best).toBeNull();
+    const tiny = [1, 2, 3].map((i) => leg(`t${i}`, `g${i}`, 0.12, 0.05));
+    expect(rankAggressiveParlays(tiny).best).toBeNull();
   });
 });

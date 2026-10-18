@@ -26,6 +26,21 @@ const PER_LEAGUE_POOL = 25;
 const SLATE_POOL = 24;
 const COMBO_SIZES = [2, 3];
 
+export type RiskMode = "balanced" | "aggressive";
+
+/**
+ * Aggressive mode hunts for payout instead of probability: legs the market
+ * prices as underdogs (below AGGRESSIVE_MAX_LEG_MARKET) that the shrunk model
+ * still likes, stacked into 3-4 leg combos and ranked by expected return. The
+ * floor on win chance keeps it from recommending a bet that is only "positive"
+ * because a tiny number was divided by a tinier one.
+ */
+export const AGGRESSIVE_MAX_LEG_MARKET = 0.5;
+export const AGGRESSIVE_MIN_WIN_CHANCE = 0.03;
+const AGGRESSIVE_COMBO_SIZES = [3, 4];
+const AGGRESSIVE_SLATE_POOL = 14;
+const AGGRESSIVE_PER_LEAGUE_POOL = 60;
+
 export interface ScoredLeg extends CandidateLeg {
   /** Model probability pulled toward the market by MODEL_TRUST. */
   shrunkProbability: number;
@@ -134,6 +149,25 @@ export function rankBestParlays(candidates: CandidateLeg[], alternatives = 2): {
   return { best: scored[0] ?? null, alternatives: scored.slice(1, 1 + alternatives) };
 }
 
+/** Pure ranking step for aggressive mode: long-shot legs, ranked by expected return. */
+export function rankAggressiveParlays(candidates: CandidateLeg[], alternatives = 2): { best: BestParlay | null; alternatives: BestParlay[] } {
+  const pool = candidates
+    .map(scoreLeg)
+    .filter((l) => l.shrunkEdge > 0 && l.gameId !== null && l.marketImpliedProbability < AGGRESSIVE_MAX_LEG_MARKET)
+    .sort((a, b) => b.shrunkEdge / b.marketImpliedProbability - a.shrunkEdge / a.marketImpliedProbability)
+    .slice(0, AGGRESSIVE_SLATE_POOL);
+
+  const scored: BestParlay[] = [];
+  for (const size of AGGRESSIVE_COMBO_SIZES) {
+    for (const legs of enumerateDistinctGameCombos(pool, size)) {
+      const parlay = scoreLegs(legs);
+      if (parlay.edge > 0 && parlay.shrunkProbability >= AGGRESSIVE_MIN_WIN_CHANCE) scored.push(parlay);
+    }
+  }
+  scored.sort((a, b) => b.expectedReturn - a.expectedReturn);
+  return { best: scored[0] ?? null, alternatives: scored.slice(1, 1 + alternatives) };
+}
+
 /**
  * The best parlay to place for games between `from` and `to` (usually "the
  * rest of today"). Only games that haven't started are used. Kalshi keeps
@@ -144,15 +178,17 @@ export function rankBestParlays(candidates: CandidateLeg[], alternatives = 2): {
 export async function buildBestParlayForWindow(
   window: { from: Date; to: Date },
   alternatives = 2,
-  leagues: League[] = BEST_PARLAY_LEAGUES
+  leagues: League[] = BEST_PARLAY_LEAGUES,
+  risk: RiskMode = "balanced"
 ): Promise<BestParlayResult> {
+  const aggressive = risk === "aggressive";
   const now = new Date();
   const from = window.from > now ? window.from : now;
 
   const [pools, gamesInWindow, inProgress] = await Promise.all([
     Promise.all(
       leagues.map((league) =>
-        buildParlaySuggestions(league, { limit: PER_LEAGUE_POOL, from, to: window.to })
+        buildParlaySuggestions(league, { limit: aggressive ? AGGRESSIVE_PER_LEAGUE_POOL : PER_LEAGUE_POOL, from, to: window.to })
       )
     ),
     db.game.count({
@@ -168,7 +204,8 @@ export async function buildBestParlayForWindow(
     }),
   ]);
 
-  return { ...rankBestParlays(pools.flat(), alternatives), gamesInWindow, inProgress };
+  const ranked = aggressive ? rankAggressiveParlays(pools.flat(), alternatives) : rankBestParlays(pools.flat(), alternatives);
+  return { ...ranked, gamesInWindow, inProgress };
 }
 
 /**
